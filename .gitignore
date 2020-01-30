@@ -1,0 +1,7 @@
+/bin
+/docs
+/tests
+/src/*.o
+/qeval.sublime*
+xcuserdata/
+.DS_Store
