@@ -26,8 +26,8 @@ debug: $(TARGET_DBG)
 clean:
 	$(RM) $(TARGET) $(TARGET_DBG)
 
-run: $(TARGET)
-	$(TARGET)
+run: $(TARGET_DBG)
+	./$(TARGET_DBG) test1.txt
 
 install: $(TARGET)
 	cp $(TARGET) ~/Bin
