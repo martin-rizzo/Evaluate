@@ -32,9 +32,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define VERSION "0.1"               /* < QEVAL current version                      */
-#define MIN_FILE_SIZE (0L)          /* < minimum size for loadable files (in bytes) */
-#define MAX_FILE_SIZE (1024L*1024L) /* < maximum size for loadable files (in bytes) */
+#define VERSION "0.1"               /* < QEVAL current version                        */
+#define MIN_FILE_SIZE (0L)          /* < minimum size for loadable files (in bytes)   */
+#define MAX_FILE_SIZE (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
+#define MAX_ERROR_COUNT 32          /* < maximum number of errors able to be reported */
 
 
 #define PARAM_IS(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
@@ -55,40 +56,110 @@ enum EvalCharacter {
 };
 
 /* supported errors */
-enum Error {
+typedef enum ErrorID_ {
     SUCCESS=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_BIG, ERR_NOT_ENOUGH_MEMORY, ERR_INT8_OUT_OF_RANGE,
     ERR_INT16_OUT_OF_RANGE, ERR_BITNUM_OUT_OF_RANGE, ERR_INVALID_EXPRESSION, ERR_INVALID_IMODE,
     ERR_UNEXPECTED_PARENTHESIS, ERR_INVALID_RST_ADDRESS, ERR_DISP_MUST_BE_ZERO,
     ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
-} error;
+} ErrorID;
 
+typedef struct Error_ {
+    const utf8 *filename;
+    int         line;
+    ErrorID     id;
+} Error;
+
+/*=================================================================================================================*/
+#pragma mark - > HANDLING ERRORS
+
+static Error       theErrors[MAX_ERROR_COUNT];
+static const utf8 *theFileName   = NULL;
+static int         theLineNumber = 0;
+static int         theErrorCount = 0;
+
+static Bool err(ErrorID errorID) {
+    Error *error;
+    if (theErrorCount<MAX_ERROR_COUNT) {
+        error = &theErrors[theErrorCount++];
+        error->filename = theFileName;
+        error->line     = theLineNumber;
+        error->id       = errorID;
+    }
+    return (errorID==SUCCESS);
+}
+
+static void printErrorMessages(void) {
+    const utf8 *message; Error *error=theErrors; int count=theErrorCount;
+    while (--count>=0) {
+        switch (error->id) {
+            case SUCCESS:                message = "SUCCESS"; break;
+            case ERR_FILE_NOT_FOUND:     message = "File not found";    break;
+            case ERR_FILE_TOO_BIG:       message = "File too big";      break;
+            case ERR_NOT_ENOUGH_MEMORY:  message = "Not enough memory"; break;
+            case ERR_INT8_OUT_OF_RANGE:  message = "The 8-bit value is out of range"; break;
+            case ERR_INT16_OUT_OF_RANGE: message = "The 16-bit value is out of range"; break;
+            case ERR_BITNUM_OUT_OF_RANGE:message = "The bit number is out of range (valid range is: 0-7)"; break;
+            case ERR_INVALID_EXPRESSION: message = "Invalid expression"; break;
+            case ERR_INVALID_IMODE:      message = "Invalid interruption mode"; break;
+            case ERR_UNEXPECTED_PARENTHESIS: message = "Unexpected ')' (closing parenthesis)"; break;
+            case ERR_INVALID_RST_ADDRESS:message = "Invalid RST address"; break;
+            case ERR_DISP_MUST_BE_ZERO:  message = "No displacement can be added to the index register"; break;
+            case ERR_DISP_OUT_OF_RANGE:  message = "The displacement is out of range"; break;
+            case ERR_UNKNOWN_PARAM:      message = "Unknown parameter"; break;
+            default:                     message = "Unknown error";     break;
+        }
+        if (error->line) { printf("%s:%d: %s\n", error->filename, error->line, message); }
+        else             { printf("%s\n", message); }
+        ++error;
+    }
+}
 
 
 /*=================================================================================================================*/
 #pragma mark - > MAIN
 
 
-static void main_EvaluateFile(const utf8 *filename) {
+static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **end) {
+
+    /* detect output directive: "PRINT", "?" */
+
+    /* detect var assignation "=" */
+
+
+    if (end) { *end = start+1; }
+    return TRUE;
+}
+
+static Bool main_EvaluateFile(const utf8 *filename) {
     FILE *file; long fileSize;
     utf8 *fileBuffer;
+    const utf8 *ptr;
+
+    /* reset globals */
+    theFileName   = filename;
+    theLineNumber = 0;
 
     /* load the whole file into the buffer */
     file = fopen(filename,"rb");
-    if ( !file ) { error=ERR_FILE_NOT_FOUND; return; }
+    if ( !file ) { return err(ERR_FILE_NOT_FOUND); }
     fseek(file, 0L, SEEK_END); fileSize = ftell(file); rewind(file);
-    if ( fileSize>MAX_FILE_SIZE ) { fclose(file); error=ERR_FILE_TOO_BIG; return; }
+    if ( fileSize>MAX_FILE_SIZE ) { fclose(file); return err(ERR_FILE_TOO_BIG); }
     fileBuffer = malloc(fileSize+1);
-    if ( !fileBuffer ) { fclose(file); error=ERR_NOT_ENOUGH_MEMORY; return; }
+    if ( !fileBuffer ) { fclose(file); return err(ERR_NOT_ENOUGH_MEMORY); }
     fread(fileBuffer, fileSize, 1, file);
     fileBuffer[fileSize]=CH_ENDFILE;
     fclose(file);
 
     /* evaluate code line by line */
+    ptr=fileBuffer; theLineNumber=1;
+    while ( *ptr!=CH_ENDFILE && theErrorCount==0 ) {
+        main_EvaluateTextLine(ptr,&ptr);
+        ++theLineNumber;
+    }
 
-    /* ... */
-
-    /* deallocate the buffer */
+    /* deallocate the buffer and print any error */
     free(fileBuffer);
+    return TRUE;
 }
 
 
@@ -126,7 +197,11 @@ int main(int argc, char *argv[]) {
     }
     /* if a filename was provided then evaluate it! */
     if (filename) {
+        theFileName   = NULL;
+        theLineNumber = 0;
+        theErrorCount = 0;
         main_EvaluateFile(filename);
+        printErrorMessages();
     }
     return 0;
 }
