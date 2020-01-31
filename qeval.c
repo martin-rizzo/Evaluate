@@ -69,6 +69,23 @@ typedef struct Error_ {
     ErrorID     id;
 } Error;
 
+typedef enum {
+    UNSOLVED, STRING, INTEGER
+} ExpressionType;
+
+typedef struct Expression_ {
+    ExpressionType type;
+    const utf8    *start;
+    const utf8    *end;
+    int            stack1len;
+    int            stack2len;
+    char           stacks[1];
+    int            user1;
+    int            user2;
+    struct Expression_  *nextDelayed;
+} Expression;
+
+
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
 
@@ -88,7 +105,7 @@ static Bool err(ErrorID errorID) {
     return (errorID==SUCCESS);
 }
 
-static void printErrorMessages(void) {
+static Bool err_PrintErrorMessages(void) {
     const utf8 *message; Error *error=theErrors; int count=theErrorCount;
     while (--count>=0) {
         switch (error->id) {
@@ -112,12 +129,102 @@ static void printErrorMessages(void) {
         else             { printf("%s\n", message); }
         ++error;
     }
+    return (theErrorCount>0);
+}
+
+/*=================================================================================================================*/
+#pragma mark - > EXPRESSION
+
+Expression * theDelayedList;
+Expression * theUnsolvedList;
+
+
+static void exp_AddDelayedExpression(Expression *expression) {
+
+}
+
+static void exp_AddUnsolvedExpression(Expression *expression) {
+
+}
+
+static void exp_AddNamedExpression(const utf8 *name, Expression *expression) {
+
+}
+
+#define exp_GetFirstDelayedExpression() theDelayedList
+
+#define exp_GetNextDelayedExpression(expression) ((expression)->nextDelayed)
+
+
+/*=================================================================================================================*/
+#pragma mark - > QEVAL
+
+/*
+    named-map     :  name -> [Expression]
+    delayed-list  :  [Expressions]
+    unsolved-list :  [Expressions]
+
+
+    LD HL, delayed           -> exp = Solve("delayed"); AddToDelayList(exp, address, linenum)
+    delayed  EQU constant*2  -> exp = Solve("constant*2"); AddToDelayList(exp,0,linenum); SetConst(delayed, exp)
+    constant EQU 100+10      -> exp = Solve("100+10"); SetConst(constant, exp)
+    LD HL, constant          -> exp = Solve("constant"); (*address) = ToInt16(exp)
+
+
+*/
+
+
+
+static Expression qeval_BeginSolving(const utf8 *exp_start, const utf8 *exp_end) {
+    Expression expression;
+    expression.type = UNSOLVED;
+    return expression;
+
+}
+
+static void qeval_ContinueSolving(Expression expression) {
+}
+
+static void qeval_AddToSolveList(Expression *expression, int user1, int user2) {
+    expression->user1 = user1;
+    expression->user2 = user2;
+    /*
+    expression->prev = last;
+    last->next = expression;
+    */
+
+}
+
+static void qeval_SetConst(const utf8 *name, Expression *expression) {
+
+    if ( expression->type == UNSOLVED ) { exp_AddDelayedExpression(expression); }
+    exp_AddNamedExpression(name, expression);
+}
+
+
+
+static Bool qeval_ToInt16(const Expression *expression, int *out_integer) {
+    (*out_integer) = 1;
+    return TRUE;
+}
+
+static const Bool qeval_ToString(const Expression *expression, utf8 *buffer, int bufferSize) {
+    strcpy(buffer,"");
+    return TRUE;
 }
 
 
 /*=================================================================================================================*/
 #pragma mark - > MAIN
 
+
+static void main_InitGlobals() {
+    theFileName     = NULL;
+    theLineNumber   = 0;
+    theErrorCount   = 0;
+    theDelayedList  = NULL;
+    theUnsolvedList = NULL;
+}
 
 static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **end) {
 
@@ -162,6 +269,15 @@ static Bool main_EvaluateFile(const utf8 *filename) {
     return TRUE;
 }
 
+static void main_PrintDelayedExpressions() {
+    utf8 str[1024];
+    Expression *expression = exp_GetFirstDelayedExpression();
+    while (expression) {
+        if ( qeval_ToString(expression,str,sizeof(str)) ) { printf("%s",str); }
+        else                                              { printf("<?>");  }
+        expression = exp_GetNextDelayedExpression(expression);
+    }
+}
 
 /*=================================================================================================================*/
 #pragma mark - > MAIN
@@ -197,11 +313,11 @@ int main(int argc, char *argv[]) {
     }
     /* if a filename was provided then evaluate it! */
     if (filename) {
-        theFileName   = NULL;
-        theLineNumber = 0;
-        theErrorCount = 0;
+        main_InitGlobals();
         main_EvaluateFile(filename);
-        printErrorMessages();
+        if (!err_PrintErrorMessages()) {
+             main_PrintDelayedExpressions();
+        }
     }
     return 0;
 }

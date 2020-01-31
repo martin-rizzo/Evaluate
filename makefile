@@ -10,7 +10,7 @@ SRC           = qeval.c
 DEBUG_FLAGS   = -O0 -D_DEBUG
 RELEASE_FLAGS = -Os -DNDEBUG
 ANSI_C_FLAGS  = -ansi
-ERROR_FLAGS   = -Wall -pedantic-errors 
+ERROR_FLAGS   = -Wall -pedantic-errors -Wno-unused-function
 CFLAGS        = $(ANSI_C_FLAGS) $(ERROR_FLAGS)
 
 
