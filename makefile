@@ -17,7 +17,7 @@ CFLAGS        = $(ANSI_C_FLAGS) $(ERROR_FLAGS)
 
 .PHONY: all clean run install
 
-all: $(TARGET)
+all: debug
 	
 release: $(TARGET)
 
