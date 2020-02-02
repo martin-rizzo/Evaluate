@@ -34,10 +34,11 @@
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
-#define VERSION "0.1"               /* < QEVAL current version                        */
-#define MIN_FILE_SIZE (0L)          /* < minimum size for loadable files (in bytes)   */
-#define MAX_FILE_SIZE (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
-#define MAX_ERROR_COUNT 32          /* < maximum number of errors able to be reported */
+#define VERSION "0.1"                 /* < QEVAL current version                        */
+#define MIN_FILE_SIZE   (0L)          /* < minimum size for loadable files (in bytes)   */
+#define MAX_FILE_SIZE   (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
+#define MAX_ERROR_COUNT (32)          /* < maximum number of errors able to be reported */
+#define CALC_STACK_SIZE (256)         /* < the calculator's stack size in number of elements */
 
 
 
@@ -66,32 +67,29 @@ typedef enum ErrorID_ {
 
 /* supported operators */
 typedef enum OperatorID {
-    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR, OP_AND, OP_OR, OP_XOR, OP_OPEN, OP_CLOSE 
+    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR, OP_AND, OP_OR, OP_XOR
 } OperatorID;
 
-
-
 typedef struct Operator { OperatorID id; const utf8* str; int prece; } Operator;
-
-typedef struct Error { ErrorID id; const utf8 *filename; int line; } Error;
-
 
 /* information about each supported operators */
 static const Operator theOperators[13] = {
     {OP_SHL ,"<<",  0}, {OP_SHR  ,">>", 0}, {OP_AND,"& ",0}, {OP_OR ,"| ",0}, {OP_XOR,"^ ",5},
     {OP_ADD ,"+ ",  6}, {OP_SUB  ,"- ", 6}, {OP_MUL,"* ",5}, {OP_DIV,"/ ",5}, {OP_MOD,"% ",5},
-    {OP_OPEN,"( ",255}, {OP_CLOSE,") ",-1},
     {0,NULL,0}
 };
 
 
+typedef struct Error { ErrorID id; const utf8 *filename; int line; } Error;
 
-typedef enum {
-    UNSOLVED, STRING, INTEGER
-} ExpressionType;
 
-typedef struct Expression_ {
+
+
+typedef enum ExpressionType { UNSOLVED, STRING, INTEGER } ExpressionType;
+
+typedef struct Expression {
     ExpressionType type;
+    int            integer;
     const utf8    *start;
     const utf8    *end;
     int            stack1len;
@@ -99,8 +97,18 @@ typedef struct Expression_ {
     char           stacks[1];
     int            user1;
     int            user2;
-    struct Expression_  *nextDelayed;
+    struct Expression *nextDelayed;
 } Expression;
+
+
+const char * ExpressionTypeToString(ExpressionType type) {
+    switch (type) {
+        case UNSOLVED: return "UNSOLVED"; 
+        case STRING:   return "STRING";
+        case INTEGER:  return "INTEGER";
+    }
+    return "Unknown";
+}
 
 /*=================================================================================================================*/
 #pragma mark - > HELPER FUNCTIONS
@@ -135,6 +143,12 @@ static Error       theErrors[MAX_ERROR_COUNT];
 static const utf8 *theFileName   = NULL;
 static int         theLineNumber = 0;
 static int         theErrorCount = 0;
+
+#ifdef NDEBUG
+#    define DLOG(x)
+#else
+#    define DLOG(x) printf x; printf("\n")
+#endif
 
 static Bool err(ErrorID errorID) {
     Error *error;
@@ -187,7 +201,7 @@ static Bool err_PrintErrorMessages(void) {
  */
 static Bool ReadLiteral(const utf8 *ptr, const utf8 **out_end, int *out_value) {
     const utf8 *last, *type; int base, value, digit;
-    assert( out_value!=NULL && out_end!=NULL && ptr!=NULL && *ptr!=C_PARAM_SEP && *ptr!='\0' );
+    assert( out_value!=NULL && out_end!=NULL && ptr!=NULL && *ptr!=CH_PARAM_SEP && *ptr!='\0' );
     
     if ( !isliteral(*ptr) ) { return FALSE; }
     base = 0;
@@ -227,13 +241,13 @@ static Bool ReadLiteral(const utf8 *ptr, const utf8 **out_end, int *out_value) {
 }
 
 /**
- * Try to read a label name from the provided string
+ * Try to read any name (vars, labels, etc) from the provided string
  * @param[in]  ptr        pointer to the string to read
  * @param[out] out_end    (output) returns a pointer to the next char to read immediately after the label
  * @param[in]  buffer     the buffer that will be filled in with the label name
  * @param[in]  bufferSize the buffer size in bytes
  */
-static Bool ReadLabelName(const utf8 *ptr, const utf8 **out_end, utf8 *buffer, int bufferSize) {
+static Bool ReadName(const utf8 *ptr, const utf8 **out_end, utf8 *buffer, int bufferSize) {
     utf8 *dest, *destend;
     assert( ptr!=NULL && out_end!=NULL && buffer!=NULL && bufferSize>0 );
     
@@ -271,7 +285,22 @@ static Bool ReadOperator(const utf8 *ptr, const utf8 **out_end, const Operator *
 
 
 /*=================================================================================================================*/
-#pragma mark - > ARITHMETIC EXPRESSION CALCULATOR
+#pragma mark - > EXPRESSION CALCULATOR
+
+static Expression theExpression;
+struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
+struct { int             array[CALC_STACK_SIZE]; int i; } valueStack;
+const Operator FakeOpen = {-1,NULL,0xFFFF};
+
+
+/** Macros to manage calculator's stacks */
+#define cINITSTACK(stack,value0,value1) stack.array[0]=value0; stack.array[1]=value1; stack.i=2;
+#define cPUSH(stack,value)              (stack.array[stack.i++]=value)
+#define cPOP(stack)                     (stack.array[--stack.i])
+#define cPEEK(stack)                    (stack.array[stack.i-1])
+#define cEXECUTE(f, oStack, vStack) \
+    vStack.array[vStack.i-2] = f(oStack.array[--oStack.i], vStack.array[vStack.i-1], vStack.array[vStack.i-2]); \
+    --vStack.i;
 
 /**
  * Executes a mathematical operation with two values using the provided operator
@@ -291,9 +320,9 @@ static int CalculateIntOperation(const Operator *operator, int arg1, int arg2) {
 }
 
 
-/*
-static void RunCalculator() {
-
+static Expression * RunCalculator() {
+    /*
+    const utf8 *ptr = theExpression.start;
     if (*ptr=='(') {
         cPUSH(opStack,op);
     }
@@ -311,14 +340,18 @@ static void RunCalculator() {
         while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(CalculateIntOperation,opStack,valueStack) }
         cPUSH(opStack,op);
     }
+    */
+    return &theExpression;
 }
-*/
+
+static void LoadCalculator(const utf8 *start, const utf8 **out_end) {
+    cINITSTACK(opStack,    &FakeOpen, &FakeOpen);
+    cINITSTACK(valueStack,         0,         0);
+    theExpression.type  = UNSOLVED;
+    theExpression.start = start;
+}
 
 /*
-static void LoadCalculator(const utf8 *start, const utf8 **out_end) {
-
-}
-
 static void LoadCalculatorState(State *state) {
 
 }
@@ -400,11 +433,8 @@ static void main_InitGlobals() {
 
 static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
-#if 0
     Bool printByDefault = FALSE;
     Expression *expression;
-#endif
-
     const utf8 *ptr = start;
     utf8 name[128], *dest, *destend;
 
@@ -417,25 +447,25 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
     safecpy_end( dest, destend );
     while (isblank(*ptr)) { ++ptr; }
 
-    printf(">> NAME = %s\n", name);
-
-#if 0
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
-        expression = qeval_MakeExpression(ptr+1,&ptr);
-        qeval_AddNamedExpression(name,expression);
+        LoadCalculator(ptr+1,&ptr);
+        expression = RunCalculator();
+        DLOG((">> %s = <type = %s; value = %d>\n", name, ExpressionTypeToString(expression->type), expression->integer));
+        /* qeval_AddNamedExpression(name,expression); */
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         do {
-        expression = qeval_MakeExpression(ptr,&ptr);
-        qeval_AddDelayedExpression(linenum,0,expression);
+            LoadCalculator(ptr,&ptr);
+            expression = RunCalculator();
+            DLOG((">> PRINT <type = %s; value = %d>", ExpressionTypeToString(expression->type), expression->integer));
+            /* AddDelayedExpression(linenum,0,expression); */
         } while (*ptr==CH_PARAM_SEP); 
     }
-#endif
 
-    while (!isendofline(*ptr)) { ++ptr; }
-    skipendofline(ptr);
+    /* place pointer in the first character of the next line and return it */
+    while (!isendofline(*ptr)) { ++ptr; } skipendofline(ptr);
     if (out_end) { (*out_end) = ptr; }
     return TRUE;
 }
