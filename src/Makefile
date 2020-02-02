@@ -1,11 +1,12 @@
 
 
-
 CC = cc
-RM = rm -f 
+RM = rm -f
+BIN_DIR = ../bin
+EX_DIR  = ../examples
 
-TARGET        = qeval
-TARGET_DBG    = qeval-dbg
+TARGET        = $(BIN_DIR)/qeval
+TARGET_DBG    = $(BIN_DIR)/qeval-dbg
 SRC           = qeval.c
 DEBUG_FLAGS   = -O0 -D_DEBUG
 RELEASE_FLAGS = -Os -DNDEBUG
@@ -15,22 +16,20 @@ CFLAGS        = $(ANSI_C_FLAGS) $(ERROR_FLAGS)
 
 
 
-.PHONY: all clean run install
+.PHONY: all debug release clean run
 
 all: debug
-	
-release: $(TARGET)
 
 debug: $(TARGET_DBG)
+
+release: $(TARGET)
 
 clean:
 	$(RM) $(TARGET) $(TARGET_DBG)
 
 run: $(TARGET_DBG)
-	./$(TARGET_DBG) test1.txt
+	./$(TARGET_DBG) $(EX_DIR)/test1.txt
 
-install: $(TARGET)
-	cp $(TARGET) ~/Bin
 
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) $(RELEASE_FLAGS) $^ -o $@
