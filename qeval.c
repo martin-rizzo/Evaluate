@@ -32,28 +32,29 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <assert.h>
 #define VERSION "0.1"               /* < QEVAL current version                        */
 #define MIN_FILE_SIZE (0L)          /* < minimum size for loadable files (in bytes)   */
 #define MAX_FILE_SIZE (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
 #define MAX_ERROR_COUNT 32          /* < maximum number of errors able to be reported */
 
 
-#define PARAM_IS(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
 
 typedef char           utf8;              /* < unicode variable width character encoding */
 typedef int Bool; enum { FALSE=0, TRUE }; /* < Boolean */
 
 
 /* some standard characters */
-enum EvalCharacter {
+typedef enum StdChars_ {
     CH_ENDFILE       ='\0' , CH_ENDLABEL    =':' , CH_STARTCOMMENT=';'  , CH_SPACE    =' '  ,
     CH_PARAM_SEP     =','  , CH_EXT_SEP     ='.' , CH_PATH_SEP    ='/'  , CH_PATH_SEP2='\\' ,
     CH_STRING        ='\'' , CH_CSTR        ='"' , CH_STRINGESC   ='\\' ,
-    CH_HEXPREFIX_ADDR='$'  , CH_HEXPREFIX2  ='#' , CH_BINPREFIX   ='%'  ,
+    CH_HEXPREFIX_ADDR='$'  , CH_HEXPREFIX   ='#' , CH_BINPREFIX   ='%'  ,
     CH_BEG_STRING = '\''   , CH_END_STRING  = '\'',
     CH_BEG_NAME   = '$'    , CH_END_NAME    = ';',
     CH_OPTIONAL_DIREC_PREFIX = '.'
-};
+} StdChars_;
 
 /* supported errors */
 typedef enum ErrorID_ {
@@ -63,11 +64,27 @@ typedef enum ErrorID_ {
     ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
 } ErrorID;
 
-typedef struct Error_ {
-    const utf8 *filename;
-    int         line;
-    ErrorID     id;
-} Error;
+/* supported operators */
+typedef enum OperatorID {
+    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR, OP_AND, OP_OR, OP_XOR, OP_OPEN, OP_CLOSE 
+} OperatorID;
+
+
+
+typedef struct Operator { OperatorID id; const utf8* str; int prece; } Operator;
+
+typedef struct Error { ErrorID id; const utf8 *filename; int line; } Error;
+
+
+/* information about each supported operators */
+static const Operator theOperators[13] = {
+    {OP_SHL ,"<<",  0}, {OP_SHR  ,">>", 0}, {OP_AND,"& ",0}, {OP_OR ,"| ",0}, {OP_XOR,"^ ",5},
+    {OP_ADD ,"+ ",  6}, {OP_SUB  ,"- ", 6}, {OP_MUL,"* ",5}, {OP_DIV,"/ ",5}, {OP_MOD,"% ",5},
+    {OP_OPEN,"( ",255}, {OP_CLOSE,") ",-1},
+    {0,NULL,0}
+};
+
+
 
 typedef enum {
     UNSOLVED, STRING, INTEGER
@@ -84,6 +101,31 @@ typedef struct Expression_ {
     int            user2;
     struct Expression_  *nextDelayed;
 } Expression;
+
+/*=================================================================================================================*/
+#pragma mark - > HELPER FUNCTIONS
+
+#define INRANGE(c,min,max) (min<=c && c<=max)
+#define PARAM_IS(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
+
+#define safecpy_begin(dest,destend,buf,size) dest=&buf[0]; destend=&buf[size-1];
+#define safecpy(dest,destend,ptr)  if (dest<destend) { *dest++ = *ptr; } ++ptr;
+#define safecpy_char(dest,destend,ch) if (dest<destend) { *dest++ = ch; }
+#define safecpy_two(dest,destend,ptr) if (dest<(destend-1)) { *dest++=ptr[0]; *dest++=ptr[1]; } ptr+=2;
+#define safecpy_upper(dest,destend,ptr) if (dest<destend) { *dest++ = toupper(*ptr); } ++ptr;
+#define safecpy_end(dest,destend) dest[0]='\0'
+
+/* identifying characters */
+static int isbin      (int ch) { return ch=='0' || ch=='1'; }
+static int ishex      (int ch) { return INRANGE(ch,'0','9') || INRANGE(ch,'A','F') || INRANGE(ch,'a','f'); }
+static int isname     (int ch) { return isalnum(ch) || ch=='_' || ch=='@' || ch=='.' || ch=='$' || ch=='#'; }
+static int isliteral  (int ch) { return isalnum(ch) || ch=='_' || ch==CH_HEXPREFIX_ADDR || ch==CH_HEXPREFIX || ch==CH_BINPREFIX; }
+static int isendofcode(int ch) { return ch=='\r' || ch=='\n' || ch==CH_STARTCOMMENT || ch==CH_ENDFILE; }
+static int isendofline(int ch) { return ch==CH_ENDFILE || ch=='\r' || ch=='\n'; }
+static int hexvalue   (int ch) { return INRANGE(ch,'0','9') ? ch-'0' : INRANGE(ch,'A','F') ? ch-'A'+10 : INRANGE(ch,'a','f') ? ch-'a'+10 : -1; }
+#define skipendofline(ptr) (ptr[0]=='\n' && ptr[1]=='\r') || (ptr[0]=='\r' && ptr[1]=='\n') ? ptr+=2 : ++ptr;
+
+
 
 
 /*=================================================================================================================*/
@@ -133,28 +175,158 @@ static Bool err_PrintErrorMessages(void) {
 }
 
 /*=================================================================================================================*/
-#pragma mark - > EXPRESSION
+#pragma mark - > READING ELEMENTS FROM THE TEXT buffer
 
-Expression * theDelayedList;
-Expression * theUnsolvedList;
+/**
+ * Try to read the value of a integer literal
+ * @param[in]   ptr          pointer to the begin of the string with the value to read
+ * @param[out]  out_end      (output) returns a pointer to the end of the read literal
+ * @param[out]  out_value    (output) returns the value of the read literal
+ * @return
+ *    FALSE = no value can be read (may be the string is an operator or something else?)
+ */
+static Bool ReadLiteral(const utf8 *ptr, const utf8 **out_end, int *out_value) {
+    const utf8 *last, *type; int base, value, digit;
+    assert( out_value!=NULL && out_end!=NULL && ptr!=NULL && *ptr!=C_PARAM_SEP && *ptr!='\0' );
+    
+    if ( !isliteral(*ptr) ) { return FALSE; }
+    base = 0;
+
+    /* try to recognize the prefix that define the number representation (base) */
+    switch ( ptr[0] ) {
+        /* differentiate the current address "$" from the hex prefix "$" */
+        case CH_HEXPREFIX_ADDR: if (ishex(ptr[1])) { base=16; ++ptr; } 
+                                /* else               { (*out_value)=(theCurrAddress&0xFFFF); (*out_end)=ptr+1; return TRUE; } */
+                                break;
+        case CH_HEXPREFIX:      if (ishex(ptr[1])) { base=16; ++ptr; } break; /* < hex type defined with "$" */
+        case CH_BINPREFIX:      if (isbin(ptr[1])) { base= 2; ++ptr; } break; /* < bin type defined with "%" */
+    }
+    /* find the last character */
+    last=ptr; while ( isliteral(*last) ) { ++last; } --last;
+    
+    /* try to find the base of a possible number (if it wasn't already found) */
+    if ( base==0 && isdigit(*ptr) ) {
+        if      ( isalpha(*last) )                 { type=last;    --last;  } /* < type defined as suffix       */
+        else if ( ptr[0]=='0' && isalpha(ptr[1]) ) { type=(ptr+1); ptr+=2;  } /* < type defined as 0x prefix    */
+        else                                       { type=NULL;    base=10; } /* < no type (default to decimal) */
+        if (type!=NULL) { switch (tolower(*type)) {
+            case 'h': case 'x':   base=16; break;
+            case 'o': case 'q':   base= 8; break;
+            case 'b': case 'y':   base= 2; break;
+            case 'd': case 't':   base=10; break;
+            default: base=0; break;
+        } }
+    }
+    if ( base==0 ) { return FALSE; }
+    /* calculate the literal value using the found base */
+    value=0; while ( ptr<=last )
+    { digit=hexvalue(*ptr++); if (0<=digit && digit<base) { value*=base; value+=digit; } }
+    while ( isliteral(*ptr) ) { ++ptr; }
+    /* everything ok!, return end pointer & value */
+    (*out_end)=ptr; (*out_value)=value; return TRUE;
+}
+
+/**
+ * Try to read a label name from the provided string
+ * @param[in]  ptr        pointer to the string to read
+ * @param[out] out_end    (output) returns a pointer to the next char to read immediately after the label
+ * @param[in]  buffer     the buffer that will be filled in with the label name
+ * @param[in]  bufferSize the buffer size in bytes
+ */
+static Bool ReadLabelName(const utf8 *ptr, const utf8 **out_end, utf8 *buffer, int bufferSize) {
+    utf8 *dest, *destend;
+    assert( ptr!=NULL && out_end!=NULL && buffer!=NULL && bufferSize>0 );
+    
+    /* skip the character signaling the beginning of name */
+    if ( !isname(*ptr) ) { return FALSE; }
+    /* copy name */
+    safecpy_begin(dest,destend,buffer,bufferSize);
+    while ( isname(*ptr) ) { safecpy_upper(dest,destend,ptr); }
+    safecpy_end(dest,destend);
+    /* label is copied!, return pointer to the next char to read */
+    (*out_end)=ptr; return TRUE;
+}
+
+/**
+ * Try to read a operator from the provided string
+ * @param[in]  ptr       pointer to the string to read
+ * @param[out] out_end   (output) returns a pointer to next char to read immediately after the operator
+ * @param[out] out_op    (output) returns a pointer to a structure with info about the operator that was read in
+ */
+static Bool ReadOperator(const utf8 *ptr, const utf8 **out_end, const Operator **out_op) {
+    const Operator* op; int firstchar;
+    assert( out_op!=NULL && out_end!=NULL && ptr!=NULL );
+    
+    firstchar = ptr[0];
+    if ( firstchar==CH_PARAM_SEP ) { return FALSE; }
+    for ( op=theOperators ; op->str!=NULL ; ++op ) {
+        if ( op->str[0]==firstchar ) {
+            if ( op->str[1]==' '    ) { (*out_op)=op; (*out_end)=ptr+1; return TRUE; }
+            if ( op->str[1]==ptr[1] ) { (*out_op)=op; (*out_end)=ptr+2; return TRUE; }
+        }
+    }
+    /* the operator wasn't correctly identified */
+    return FALSE;
+}
 
 
-static void exp_AddDelayedExpression(Expression *expression) {
+/*=================================================================================================================*/
+#pragma mark - > ARITHMETIC EXPRESSION CALCULATOR
+
+/**
+ * Executes a mathematical operation with two values using the provided operator
+ * @param[in] operator  the operation to execute
+ * @param[in] arg1      the left value
+ * @param[in] arg2      the right value
+ */
+static int CalculateIntOperation(const Operator *operator, int arg1, int arg2) {
+    switch (operator->id) {
+        case OP_ADD: return arg1 +  arg2;    case OP_SUB: return arg1 -  arg2;
+        case OP_MUL: return arg1 *  arg2;    case OP_DIV: return arg1 /  arg2;
+        case OP_MOD: return arg1 %  arg2;    case OP_SHL: return arg1 << arg2;
+        case OP_SHR: return arg1 >> arg2;    case OP_AND: return arg1 &  arg2;
+        case OP_OR:  return arg1 |  arg2;    case OP_XOR: return arg1 ^  arg2;
+        default:     return arg1;
+    }
+}
+
+
+/*
+static void RunCalculator() {
+
+    if (*ptr=='(') {
+        cPUSH(opStack,op);
+    }
+    else if (*ptr==')') {
+        while (cPEEK(opStack)->type!=OP_OPEN) { cEXECUTE(CalculateIntOperation,opStack,valueStack); }
+        if (exp_POP(opStack)==&FakeOpen) { error=ERR_UNEXPECTED_PARENTHESIS; return; }
+    }
+    else if ( ReadLiteral(ptr,&ptr,&value) ) {
+        cPUSH(valueStack, value);
+    }
+    else if ( ReadLabelName(ptr,&ptr,label,sizeof(label)) ) {
+        assert( FALSE );
+    }
+    else if ( ReadOperator(ptr,&ptr,&op) ) {
+        while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(CalculateIntOperation,opStack,valueStack) }
+        cPUSH(opStack,op);
+    }
+}
+*/
+
+/*
+static void LoadCalculator(const utf8 *start, const utf8 **out_end) {
 
 }
 
-static void exp_AddUnsolvedExpression(Expression *expression) {
+static void LoadCalculatorState(State *state) {
 
 }
 
-static void exp_AddNamedExpression(const utf8 *name, Expression *expression) {
+static State * SaveCalculatorState() {
 
 }
-
-#define exp_GetFirstDelayedExpression() theDelayedList
-
-#define exp_GetNextDelayedExpression(expression) ((expression)->nextDelayed)
-
+*/
 
 /*=================================================================================================================*/
 #pragma mark - > QEVAL
@@ -173,46 +345,46 @@ static void exp_AddNamedExpression(const utf8 *name, Expression *expression) {
 
 */
 
+Expression * theDelayedList;
+Expression * theUnsolvedList;
 
 
-static Expression qeval_BeginSolving(const utf8 *exp_start, const utf8 *exp_end) {
-    Expression expression;
-    expression.type = UNSOLVED;
+static Expression * qeval_MakeExpression(const utf8 *start, const utf8 **out_end) {
+    const utf8 *ptr = start;
+    Expression *expression = malloc(sizeof(Expression));
+    expression->type = UNSOLVED;
+    if (out_end) { (*out_end)=ptr; }
     return expression;
-
 }
 
-static void qeval_ContinueSolving(Expression expression) {
+
+static Bool qeval_AddNamedExpression(const utf8 *name, Expression *expression) {
+
+    return TRUE;
 }
 
-static void qeval_AddToSolveList(Expression *expression, int user1, int user2) {
+static Bool qeval_AddDelayedExpression(int user1, int user2, Expression *expression) {
     expression->user1 = user1;
     expression->user2 = user2;
     /*
     expression->prev = last;
     last->next = expression;
     */
-
+    return TRUE;
 }
-
-static void qeval_SetConst(const utf8 *name, Expression *expression) {
-
-    if ( expression->type == UNSOLVED ) { exp_AddDelayedExpression(expression); }
-    exp_AddNamedExpression(name, expression);
-}
-
-
 
 static Bool qeval_ToInt16(const Expression *expression, int *out_integer) {
     (*out_integer) = 1;
     return TRUE;
 }
 
-static const Bool qeval_ToString(const Expression *expression, utf8 *buffer, int bufferSize) {
+static Bool qeval_ToString(const Expression *expression, utf8 *buffer, int bufferSize) {
     strcpy(buffer,"");
     return TRUE;
 }
 
+#define qeval_FirstDelayedExpression() theDelayedList
+#define qeval_NextDelayedExpression(exp) ((exp)->nextDelayed)
 
 /*=================================================================================================================*/
 #pragma mark - > MAIN
@@ -226,14 +398,45 @@ static void main_InitGlobals() {
     theUnsolvedList = NULL;
 }
 
-static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **end) {
+static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
-    /* detect output directive: "PRINT", "?" */
+#if 0
+    Bool printByDefault = FALSE;
+    Expression *expression;
+#endif
 
+    const utf8 *ptr = start;
+    utf8 name[128], *dest, *destend;
+
+    /* skip all blank spaces at the beginning of the line */
+    safecpy_begin( dest, destend, name, sizeof(name) );
+    ptr=start; while ( isblank(*ptr) ) { ++ptr; }
+
+    /* extract name */
+    while ( !isendofcode(*ptr) && !isblank(*ptr) ) { safecpy_upper(dest,destend,ptr);  }
+    safecpy_end( dest, destend );
+    while (isblank(*ptr)) { ++ptr; }
+
+    printf(">> NAME = %s\n", name);
+
+#if 0
     /* detect var assignation "=" */
+    if ( *ptr=='=' ) {
+        expression = qeval_MakeExpression(ptr+1,&ptr);
+        qeval_AddNamedExpression(name,expression);
+    }
+    /* detect output directive: "PRINT", "?" */
+    else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
+        do {
+        expression = qeval_MakeExpression(ptr,&ptr);
+        qeval_AddDelayedExpression(linenum,0,expression);
+        } while (*ptr==CH_PARAM_SEP); 
+    }
+#endif
 
-
-    if (end) { *end = start+1; }
+    while (!isendofline(*ptr)) { ++ptr; }
+    skipendofline(ptr);
+    if (out_end) { (*out_end) = ptr; }
     return TRUE;
 }
 
@@ -271,11 +474,11 @@ static Bool main_EvaluateFile(const utf8 *filename) {
 
 static void main_PrintDelayedExpressions() {
     utf8 str[1024];
-    Expression *expression = exp_GetFirstDelayedExpression();
+    Expression *expression = qeval_FirstDelayedExpression();
     while (expression) {
         if ( qeval_ToString(expression,str,sizeof(str)) ) { printf("%s",str); }
         else                                              { printf("<?>");  }
-        expression = exp_GetNextDelayedExpression(expression);
+        expression = qeval_NextDelayedExpression(expression);
     }
 }
 
