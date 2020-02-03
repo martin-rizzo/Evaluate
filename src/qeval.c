@@ -86,7 +86,7 @@ typedef struct Error { ErrorID id; const utf8 *filename; int line; } Error;
 
 
 
-typedef enum ValueType { TYPE_UNSOLVED, TYPE_INTEGER, TYPE_ASTRING, TYPE_CSTRING } ValueType;
+typedef enum ValueType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_INTEGER, TYPE_ASTRING, TYPE_CSTRING } ValueType;
 
 typedef struct Expression {
     ValueType type;
@@ -103,6 +103,7 @@ typedef struct Expression {
 const char * ValueTypeToString(ValueType type) {
     switch (type) {
         case TYPE_UNSOLVED: return "UNSOLVED"; 
+        case TYPE_EMPTY:    return "EMPTY";
         case TYPE_ASTRING:  return "ASTRING";
         case TYPE_CSTRING:  return "CSTRING";
         case TYPE_INTEGER:  return "INTEGER";
@@ -348,16 +349,17 @@ static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
     const Operator* op;
     int value; utf8 name[MAX_NAME_LEN]; Bool continueScanning;
-
-
-    cINITSTACK(opStack,    &OpSafeGuard, &OpSafeGuard);
-    cINITSTACK(valueStack,            0,            0);
+    assert( start!=NULL ); assert( out_end!=NULL );
+    assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
 
     theValue.type           = TYPE_UNSOLVED;
     theValue.x.unsolved.ptr = ptr;
 
     skipblankspaces(ptr);
-    if ( *ptr==CH_CSTRING ) {
+    if ( *ptr==CH_PARAM_SEP || isendofline(*ptr) ) {
+        theValue.type = TYPE_EMPTY;
+    }
+    else if ( *ptr==CH_CSTRING ) {
         theValue.type          = TYPE_CSTRING;
         theValue.x.cstring.start = ++ptr;
         do {
@@ -365,7 +367,8 @@ static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
             continueScanning = ptr[0]==CH_CSTRING && *(ptr-1)==CH_STRING_ESCAPE;
             if  (continueScanning) { ptr+=2; }
         } while (continueScanning);
-        theValue.x.cstring.end = (ptr-1);
+        theValue.x.cstring.end = ptr;
+        if (*ptr==CH_CSTRING) { ++ptr; }
     }
     else if ( *ptr==CH_ASMSTRING ) {
         theValue.type          = TYPE_ASTRING;
@@ -375,9 +378,12 @@ static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
             continueScanning = ptr[0]==CH_ASMSTRING && ptr[1]==CH_ASMSTRING;
             if  (continueScanning) { ptr+=2; }
         } while (continueScanning);
-        theValue.x.astring.end = (ptr-1);
+        theValue.x.astring.end = ptr;
+        if (*ptr==CH_ASMSTRING) { ++ptr; }
     }
     else {
+        cINITSTACK(opStack,    &OpSafeGuard, &OpSafeGuard);
+        cINITSTACK(valueStack,            0,            0);
         while (*ptr!=CH_PARAM_SEP && !isendofcode(*ptr)) {
             if (*ptr=='(') {
                 cPUSH(opStack,&OpParenthesis);
@@ -411,6 +417,7 @@ static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
         theValue.x.integer.value = cPOP(valueStack);
     }
 
+    while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
     (*out_end) = ptr;
     return &theValue;
 }
@@ -461,14 +468,40 @@ static Bool qeval_AddDelayedExpression(int user1, int user2, Expression *express
     return TRUE;
 }
 
-static Bool qeval_ToInt16(const Expression *expression, int *out_integer) {
-    (*out_integer) = 1;
-    return TRUE;
+static Bool qeval_ToInt16(const Expression *value, int *out_integer) {
+    switch (value->type) {
+        case TYPE_INTEGER:
+            (*out_integer) = value->x.integer.value;
+            return TRUE;
+        default:
+            return FALSE;
+    }
 }
 
-static Bool qeval_ToString(const Expression *expression, utf8 *buffer, int bufferSize) {
-    strcpy(buffer,"");
-    return TRUE;
+static Bool qeval_ToString(const Expression *value, utf8 *buffer, int bufferSize) {
+    utf8 *dest, *destend; const utf8 *ptr;
+
+    switch (value->type)
+    {
+        case TYPE_ASTRING:
+            safecpy_begin(dest,destend,buffer,bufferSize);
+            ptr=value->x.astring.start; while(ptr<value->x.astring.end) {
+                safecpy(dest,destend,ptr);
+            }
+            safecpy_end(dest,destend);
+            return TRUE;
+
+        case TYPE_CSTRING:
+            safecpy_begin(dest,destend,buffer,bufferSize);
+            ptr=value->x.cstring.start; while(ptr<value->x.cstring.end) {
+                safecpy(dest,destend,ptr);
+            }
+            safecpy_end(dest,destend);
+            return TRUE;
+
+        default:
+            return FALSE;
+    }
 }
 
 #define qeval_FirstDelayedExpression() theDelayedList
@@ -486,18 +519,26 @@ static void main_InitGlobals() {
     theUnsolvedList = NULL;
 }
 
+static void main_PrintValue(const Expression *value) {
+    utf8 str[1024]; int integer;
+    if      (qeval_ToInt16(value,&integer))         { printf("%d ",integer); }
+    else if (qeval_ToString(value,str,sizeof(str))) { printf("%s",str);      }
+    else                                            { printf("??? ");        }
+}
+
 static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
     Bool printByDefault = FALSE;
+    Bool continueScanning;
     Expression *value;
     const utf8 *ptr = start;
     utf8 name[128], *dest, *destend;
 
     /* skip all blank spaces at the beginning of the line */
-    safecpy_begin( dest, destend, name, sizeof(name) );
     ptr=start; while ( isblank(*ptr) ) { ++ptr; }
 
     /* extract name */
+    safecpy_begin( dest, destend, name, sizeof(name) );
     while ( !isendofcode(*ptr) && !isblank(*ptr) ) { safecpy_upper(dest,destend,ptr);  }
     safecpy_end( dest, destend );
     while (isblank(*ptr)) { ++ptr; }
@@ -505,16 +546,22 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
         value = StartCalculation(ptr+1,&ptr);
-        DLOG_VALUE(*value);
+        /* DLOG_VALUE(*value); */
         /* qeval_AddNamedExpression(name,expression); */
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         do {
             value = StartCalculation(ptr,&ptr);
-            DLOG_VALUE(*value);
+            main_PrintValue(value);
             /* AddDelayedExpression(linenum,0,expression); */
-        } while (*ptr==CH_PARAM_SEP); 
+            continueScanning = (*ptr==CH_PARAM_SEP);
+            if  (continueScanning) { ++ptr; }
+        } while (continueScanning); 
+        theValue.type = TYPE_ASTRING;
+        theValue.x.astring.start = "\n";
+        theValue.x.astring.end   = theValue.x.astring.start + 1;
+        main_PrintValue(&theValue);
     }
 
     /* place pointer in the first character of the next line and return it */
