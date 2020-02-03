@@ -49,12 +49,10 @@ typedef int Bool; enum { FALSE=0, TRUE }; /* < Boolean */
 
 /* some standard characters */
 typedef enum StdChars_ {
-    CH_ENDFILE       ='\0' , CH_ENDLABEL    =':' , CH_STARTCOMMENT=';'  , CH_SPACE    =' '  ,
-    CH_PARAM_SEP     =','  , CH_EXT_SEP     ='.' , CH_PATH_SEP    ='/'  , CH_PATH_SEP2='\\' ,
-    CH_STRING        ='\'' , CH_CSTR        ='"' , CH_STRINGESC   ='\\' ,
+    CH_ENDFILE       ='\0' , CH_ENDLABEL    =':' , CH_STARTCOMMENT  =';'  , CH_SPACE    =' '  ,
+    CH_PARAM_SEP     =','  , CH_EXT_SEP     ='.' , CH_PATH_SEP      ='/'  , CH_PATH_SEP2='\\' ,
+    CH_ASMSTRING     ='\'' , CH_CSTRING     ='"' , CH_STRING_ESCAPE ='\\' ,
     CH_HEXPREFIX_ADDR='$'  , CH_HEXPREFIX   ='#' , CH_BINPREFIX   ='%'  ,
-    CH_BEG_STRING = '\''   , CH_END_STRING  = '\'',
-    CH_BEG_NAME   = '$'    , CH_END_NAME    = ';',
     CH_OPTIONAL_DIREC_PREFIX = '.'
 } StdChars_;
 
@@ -88,27 +86,26 @@ typedef struct Error { ErrorID id; const utf8 *filename; int line; } Error;
 
 
 
-typedef enum ExpressionType { UNSOLVED, STRING, INTEGER } ExpressionType;
+typedef enum ValueType { TYPE_UNSOLVED, TYPE_INTEGER, TYPE_ASTRING, TYPE_CSTRING } ValueType;
 
 typedef struct Expression {
-    ExpressionType type;
-    int            integer;
-    const utf8    *start;
-    const utf8    *end;
-    int            stack1len;
-    int            stack2len;
-    char           stacks[1];
-    int            user1;
-    int            user2;
-    struct Expression *nextDelayed;
+    ValueType type;
+    union {
+        struct { const utf8 *ptr;         } unsolved;
+        struct { int value;               } integer;
+        struct { const utf8 *start, *end; } astring;
+        struct { const utf8 *start, *end; } cstring;
+    } x;
 } Expression;
 
 
-const char * ExpressionTypeToString(ExpressionType type) {
+
+const char * ValueTypeToString(ValueType type) {
     switch (type) {
-        case UNSOLVED: return "UNSOLVED"; 
-        case STRING:   return "STRING";
-        case INTEGER:  return "INTEGER";
+        case TYPE_UNSOLVED: return "UNSOLVED"; 
+        case TYPE_ASTRING:  return "ASTRING";
+        case TYPE_CSTRING:  return "CSTRING";
+        case TYPE_INTEGER:  return "INTEGER";
     }
     return "Unknown";
 }
@@ -151,6 +148,20 @@ static int         theErrorCount = 0;
 #    define DLOG(x)
 #else
 #    define DLOG(x) printf x; printf("\n")
+#endif
+
+#ifdef NDEBUG
+#   define DLOG_VALUE(value)
+#else
+    void DLOG_VALUE(const Expression value) {
+        switch (value.type) {
+            case TYPE_UNSOLVED: DLOG(("<Unsolved>")); break;
+            case TYPE_INTEGER:  DLOG(("<Integer value=%d>", value.x.integer.value)); break;
+            case TYPE_ASTRING:  DLOG(("<AString value=\"%c%c...\">", value.x.astring.start[0], value.x.astring.start[1] )); break;
+            case TYPE_CSTRING:  DLOG(("<CString value=\"%c%c...\">", value.x.cstring.start[0], value.x.cstring.start[1] )); break;
+            default:       DLOG(("<Unknown> ERROR!")); break;
+        }
+    }
 #endif
 
 static Bool err(ErrorID errorID) {
@@ -290,7 +301,7 @@ static Bool ReadOperator(const utf8 *ptr, const utf8 **out_end, const Operator *
 /*=================================================================================================================*/
 #pragma mark - > MATHEMATICAL EXPRESSION CALCULATION
 
-static Expression theExpression;
+static Expression theValue;
 struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
 struct { int             array[CALC_STACK_SIZE]; int i; } valueStack;
 
@@ -333,64 +344,76 @@ static float SolveFloatCalculation(const Operator *operator, float arg1, float a
 }
 
 
-static Expression * RunCalculation() {
-    int value;
-    utf8 name[MAX_NAME_LEN];
-    const Operator* op;
-    const utf8 *ptr = theExpression.start;
-
-    skipblankspaces(ptr);
-
-    while (*ptr!=CH_PARAM_SEP && !isendofcode(*ptr)) {
-        if (*ptr=='(') {
-            cPUSH(opStack,&OpParenthesis);
-        }
-        else if (*ptr==')') {
-            while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
-            if (cPOP(opStack)==&OpSafeGuard) { err(ERR_UNEXPECTED_PARENTHESIS); return NULL; }
-        }
-        else if ( ReadLiteral(ptr,&ptr,&value) ) {
-            cPUSH(valueStack, value);
-        }
-        else if ( ReadName(ptr,&ptr,name,sizeof(name)) ) {
-            assert( FALSE );
-        }
-        else if ( ReadOperator(ptr,&ptr,&op) ) {
-            while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(SolveIntCalculation,opStack,valueStack) }
-            cPUSH(opStack,op);
-        }
-        else {
-            err(ERR_INVALID_EXPRESSION);
-            return &theExpression;
-        }
-        skipblankspaces(ptr);
-    }
-
-    /* process any pending operator before return */
-    while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
-    if ( valueStack.i!=3 || opStack.i!=2 ) { err(ERR_INVALID_EXPRESSION); return &theExpression; }
-
-    theExpression.type    = INTEGER;
-    theExpression.integer = cPOP(valueStack);
-    theExpression.start   = ptr;
-    return &theExpression;
-}
-
 static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
+    const utf8 *ptr = start;
+    const Operator* op;
+    int value; utf8 name[MAX_NAME_LEN]; Bool continueScanning;
+
+
     cINITSTACK(opStack,    &OpSafeGuard, &OpSafeGuard);
     cINITSTACK(valueStack,            0,            0);
-    theExpression.type  = UNSOLVED;
-    theExpression.start = start;
-    RunCalculation();
-    (*out_end) = theExpression.start;
-    return &theExpression;
-}
 
-/*
-static Expression * ContinueCalculation(State *state) {
+    theValue.type           = TYPE_UNSOLVED;
+    theValue.x.unsolved.ptr = ptr;
 
+    skipblankspaces(ptr);
+    if ( *ptr==CH_CSTRING ) {
+        theValue.type          = TYPE_CSTRING;
+        theValue.x.cstring.start = ++ptr;
+        do {
+            while ( !isendofcode(*ptr) && *ptr!=CH_CSTRING) { ++ptr; }
+            continueScanning = ptr[0]==CH_CSTRING && *(ptr-1)==CH_STRING_ESCAPE;
+            if  (continueScanning) { ptr+=2; }
+        } while (continueScanning);
+        theValue.x.cstring.end = (ptr-1);
+    }
+    else if ( *ptr==CH_ASMSTRING ) {
+        theValue.type          = TYPE_ASTRING;
+        theValue.x.astring.start = ++ptr;
+        do {
+            while ( !isendofcode(*ptr) && *ptr!=CH_ASMSTRING) { ++ptr; }
+            continueScanning = ptr[0]==CH_ASMSTRING && ptr[1]==CH_ASMSTRING;
+            if  (continueScanning) { ptr+=2; }
+        } while (continueScanning);
+        theValue.x.astring.end = (ptr-1);
+    }
+    else {
+        while (*ptr!=CH_PARAM_SEP && !isendofcode(*ptr)) {
+            if (*ptr=='(') {
+                cPUSH(opStack,&OpParenthesis);
+            }
+            else if (*ptr==')') {
+                while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
+                if (cPOP(opStack)==&OpSafeGuard) { err(ERR_UNEXPECTED_PARENTHESIS); return NULL; }
+            }
+            else if ( ReadLiteral(ptr,&ptr,&value) ) {
+                cPUSH(valueStack, value);
+            }
+            else if ( ReadName(ptr,&ptr,name,sizeof(name)) ) {
+                assert( FALSE );
+            }
+            else if ( ReadOperator(ptr,&ptr,&op) ) {
+                while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(SolveIntCalculation,opStack,valueStack) }
+                cPUSH(opStack,op);
+            }
+            else {
+                err(ERR_INVALID_EXPRESSION);
+                return &theValue;
+            }
+            skipblankspaces(ptr);
+        }
+
+        /* process any pending operator before return */
+        while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
+        if ( valueStack.i!=3 || opStack.i!=2 ) { err(ERR_INVALID_EXPRESSION); return &theValue; }
+
+        theValue.type          = TYPE_INTEGER;
+        theValue.x.integer.value = cPOP(valueStack);
+    }
+
+    (*out_end) = ptr;
+    return &theValue;
 }
-*/
 
 
 /*=================================================================================================================*/
@@ -417,7 +440,7 @@ Expression * theUnsolvedList;
 static Expression * qeval_MakeExpression(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
     Expression *expression = malloc(sizeof(Expression));
-    expression->type = UNSOLVED;
+    expression->type = TYPE_UNSOLVED;
     if (out_end) { (*out_end)=ptr; }
     return expression;
 }
@@ -429,9 +452,9 @@ static Bool qeval_AddNamedExpression(const utf8 *name, Expression *expression) {
 }
 
 static Bool qeval_AddDelayedExpression(int user1, int user2, Expression *expression) {
+    /*
     expression->user1 = user1;
     expression->user2 = user2;
-    /*
     expression->prev = last;
     last->next = expression;
     */
@@ -466,7 +489,7 @@ static void main_InitGlobals() {
 static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
     Bool printByDefault = FALSE;
-    Expression *expression;
+    Expression *value;
     const utf8 *ptr = start;
     utf8 name[128], *dest, *destend;
 
@@ -481,15 +504,15 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
-        expression = StartCalculation(ptr+1,&ptr);
-        DLOG((">> %s = <type = %s; value = %d>\n", name, ExpressionTypeToString(expression->type), expression->integer));
+        value = StartCalculation(ptr+1,&ptr);
+        DLOG_VALUE(*value);
         /* qeval_AddNamedExpression(name,expression); */
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         do {
-            expression = StartCalculation(ptr,&ptr);
-            DLOG((">> PRINT <type = %s; value = %d>", ExpressionTypeToString(expression->type), expression->integer));
+            value = StartCalculation(ptr,&ptr);
+            DLOG_VALUE(*value);
             /* AddDelayedExpression(linenum,0,expression); */
         } while (*ptr==CH_PARAM_SEP); 
     }
@@ -533,6 +556,7 @@ static Bool main_EvaluateFile(const utf8 *filename) {
 }
 
 static void main_PrintDelayedExpressions() {
+    /*
     utf8 str[1024];
     Expression *expression = qeval_FirstDelayedExpression();
     while (expression) {
@@ -540,6 +564,7 @@ static void main_PrintDelayedExpressions() {
         else                                              { printf("<?>");  }
         expression = qeval_NextDelayedExpression(expression);
     }
+    */
 }
 
 /*=================================================================================================================*/
