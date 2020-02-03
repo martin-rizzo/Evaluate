@@ -1,5 +1,8 @@
 ; Integer literals interpretation test
 
+PRINT 200
+PRINT $c8
+
 PRINT "200         = ",  200          ; decimal
 PRINT "200d        = ",  200d         ; decimal
 PRINT "0200d       = ",  0200d        ; decimal

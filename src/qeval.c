@@ -38,6 +38,7 @@
 #define MIN_FILE_SIZE   (0L)          /* < minimum size for loadable files (in bytes)   */
 #define MAX_FILE_SIZE   (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
 #define MAX_ERROR_COUNT (32)          /* < maximum number of errors able to be reported */
+#define MAX_NAME_LEN    (63)          /* < maximum length for names of labels, opcodes, symbols, etc (in bytes) */
 #define CALC_STACK_SIZE (256)         /* < the calculator's stack size in number of elements */
 
 
@@ -70,7 +71,7 @@ typedef enum OperatorID {
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR, OP_AND, OP_OR, OP_XOR
 } OperatorID;
 
-typedef struct Operator { OperatorID id; const utf8* str; int prece; } Operator;
+typedef struct Operator { OperatorID id; const utf8* str; int preced; } Operator;
 
 /* information about each supported operators */
 static const Operator theOperators[13] = {
@@ -78,6 +79,8 @@ static const Operator theOperators[13] = {
     {OP_ADD ,"+ ",  6}, {OP_SUB  ,"- ", 6}, {OP_MUL,"* ",5}, {OP_DIV,"/ ",5}, {OP_MOD,"% ",5},
     {0,NULL,0}
 };
+static const Operator OpParenthesis = {-1,"",255};
+static const Operator OpSafeGuard   = {-1,"",255};
 
 
 typedef struct Error { ErrorID id; const utf8 *filename; int line; } Error;
@@ -132,7 +135,7 @@ static int isendofcode(int ch) { return ch=='\r' || ch=='\n' || ch==CH_STARTCOMM
 static int isendofline(int ch) { return ch==CH_ENDFILE || ch=='\r' || ch=='\n'; }
 static int hexvalue   (int ch) { return INRANGE(ch,'0','9') ? ch-'0' : INRANGE(ch,'A','F') ? ch-'A'+10 : INRANGE(ch,'a','f') ? ch-'a'+10 : -1; }
 #define skipendofline(ptr) (ptr[0]=='\n' && ptr[1]=='\r') || (ptr[0]=='\r' && ptr[1]=='\n') ? ptr+=2 : ++ptr;
-
+#define skipblankspaces(ptr) while ( isblank(*ptr) ) { ++ptr; }
 
 
 
@@ -285,12 +288,11 @@ static Bool ReadOperator(const utf8 *ptr, const utf8 **out_end, const Operator *
 
 
 /*=================================================================================================================*/
-#pragma mark - > EXPRESSION CALCULATOR
+#pragma mark - > MATHEMATICAL EXPRESSION CALCULATION
 
 static Expression theExpression;
 struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
 struct { int             array[CALC_STACK_SIZE]; int i; } valueStack;
-const Operator FakeOpen = {-1,NULL,0xFFFF};
 
 
 /** Macros to manage calculator's stacks */
@@ -303,12 +305,12 @@ const Operator FakeOpen = {-1,NULL,0xFFFF};
     --vStack.i;
 
 /**
- * Executes a mathematical operation with two values using the provided operator
- * @param[in] operator  the operation to execute
+ * Solve a simple mathematical operation between two integer values applying the provided operator
+ * @param[in] operator  the operation to apply
  * @param[in] arg1      the left value
  * @param[in] arg2      the right value
  */
-static int CalculateIntOperation(const Operator *operator, int arg1, int arg2) {
+static int SolveIntCalculation(const Operator *operator, int arg1, int arg2) {
     switch (operator->id) {
         case OP_ADD: return arg1 +  arg2;    case OP_SUB: return arg1 -  arg2;
         case OP_MUL: return arg1 *  arg2;    case OP_DIV: return arg1 /  arg2;
@@ -319,47 +321,77 @@ static int CalculateIntOperation(const Operator *operator, int arg1, int arg2) {
     }
 }
 
+/**
+ * Solve a simple mathematical operation between two floating point values using the provided operator
+ * @param[in] operator  the operation to apply
+ * @param[in] arg1      the left value
+ * @param[in] arg2      the right value
+ */
+static float SolveFloatCalculation(const Operator *operator, float arg1, float arg2) {
+    assert( FALSE ); /* not implemented yet */
+    return arg1;
+}
 
-static Expression * RunCalculator() {
-    /*
+
+static Expression * RunCalculation() {
+    int value;
+    utf8 name[MAX_NAME_LEN];
+    const Operator* op;
     const utf8 *ptr = theExpression.start;
-    if (*ptr=='(') {
-        cPUSH(opStack,op);
+
+    skipblankspaces(ptr);
+
+    while (*ptr!=CH_PARAM_SEP && !isendofcode(*ptr)) {
+        if (*ptr=='(') {
+            cPUSH(opStack,&OpParenthesis);
+        }
+        else if (*ptr==')') {
+            while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
+            if (cPOP(opStack)==&OpSafeGuard) { err(ERR_UNEXPECTED_PARENTHESIS); return NULL; }
+        }
+        else if ( ReadLiteral(ptr,&ptr,&value) ) {
+            cPUSH(valueStack, value);
+        }
+        else if ( ReadName(ptr,&ptr,name,sizeof(name)) ) {
+            assert( FALSE );
+        }
+        else if ( ReadOperator(ptr,&ptr,&op) ) {
+            while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(SolveIntCalculation,opStack,valueStack) }
+            cPUSH(opStack,op);
+        }
+        else {
+            err(ERR_INVALID_EXPRESSION);
+            return &theExpression;
+        }
+        skipblankspaces(ptr);
     }
-    else if (*ptr==')') {
-        while (cPEEK(opStack)->type!=OP_OPEN) { cEXECUTE(CalculateIntOperation,opStack,valueStack); }
-        if (exp_POP(opStack)==&FakeOpen) { error=ERR_UNEXPECTED_PARENTHESIS; return; }
-    }
-    else if ( ReadLiteral(ptr,&ptr,&value) ) {
-        cPUSH(valueStack, value);
-    }
-    else if ( ReadLabelName(ptr,&ptr,label,sizeof(label)) ) {
-        assert( FALSE );
-    }
-    else if ( ReadOperator(ptr,&ptr,&op) ) {
-        while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(CalculateIntOperation,opStack,valueStack) }
-        cPUSH(opStack,op);
-    }
-    */
+
+    /* process any pending operator before return */
+    while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
+    if ( valueStack.i!=3 || opStack.i!=2 ) { err(ERR_INVALID_EXPRESSION); return &theExpression; }
+
+    theExpression.type    = INTEGER;
+    theExpression.integer = cPOP(valueStack);
+    theExpression.start   = ptr;
     return &theExpression;
 }
 
-static void LoadCalculator(const utf8 *start, const utf8 **out_end) {
-    cINITSTACK(opStack,    &FakeOpen, &FakeOpen);
-    cINITSTACK(valueStack,         0,         0);
+static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
+    cINITSTACK(opStack,    &OpSafeGuard, &OpSafeGuard);
+    cINITSTACK(valueStack,            0,            0);
     theExpression.type  = UNSOLVED;
     theExpression.start = start;
+    RunCalculation();
+    (*out_end) = theExpression.start;
+    return &theExpression;
 }
 
 /*
-static void LoadCalculatorState(State *state) {
-
-}
-
-static State * SaveCalculatorState() {
+static Expression * ContinueCalculation(State *state) {
 
 }
 */
+
 
 /*=================================================================================================================*/
 #pragma mark - > QEVAL
@@ -449,16 +481,14 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
-        LoadCalculator(ptr+1,&ptr);
-        expression = RunCalculator();
+        expression = StartCalculation(ptr+1,&ptr);
         DLOG((">> %s = <type = %s; value = %d>\n", name, ExpressionTypeToString(expression->type), expression->integer));
         /* qeval_AddNamedExpression(name,expression); */
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         do {
-            LoadCalculator(ptr,&ptr);
-            expression = RunCalculator();
+            expression = StartCalculation(ptr,&ptr);
             DLOG((">> PRINT <type = %s; value = %d>", ExpressionTypeToString(expression->type), expression->integer));
             /* AddDelayedExpression(linenum,0,expression); */
         } while (*ptr==CH_PARAM_SEP); 
