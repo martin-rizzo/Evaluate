@@ -100,8 +100,8 @@ If the string is enclosed in double-quotes then it will be processed like a C st
 ;   \\ = #5C backslash
 ;   \' = #27 single quotation mark
 ;   \" = #22 double quotation mark
-;   \nnn = the byte whose numerical value is given by nnn interpreted as an octal number
-;   \xhh = the byte whose numerical value is given by hh… interpreted as a hexadecimal number
+;   \nnn = a char corresponding to value 'nnn' interpreted as octal
+;   \xnn = a char corresponding to value 'nn' interpreted as hexadecimal
 
 C_STRING = "hello world!\r\n"
 C_STRING = "this is the \"best\" world!"
