@@ -132,6 +132,7 @@ static int isliteral  (int ch) { return isalnum(ch) || ch=='_' || ch==CH_HEXPREF
 static int isendofcode(int ch) { return ch=='\r' || ch=='\n' || ch==CH_STARTCOMMENT || ch==CH_ENDFILE; }
 static int isendofline(int ch) { return ch==CH_ENDFILE || ch=='\r' || ch=='\n'; }
 static int hexvalue   (int ch) { return INRANGE(ch,'0','9') ? ch-'0' : INRANGE(ch,'A','F') ? ch-'A'+10 : INRANGE(ch,'a','f') ? ch-'a'+10 : -1; }
+static int octvalue   (int ch) { return INRANGE(ch,'0','7') ? ch-'0' : -1; }
 #define skipendofline(ptr) (ptr[0]=='\n' && ptr[1]=='\r') || (ptr[0]=='\r' && ptr[1]=='\n') ? ptr+=2 : ++ptr;
 #define skipblankspaces(ptr) while ( isblank(*ptr) ) { ++ptr; }
 
@@ -479,22 +480,57 @@ static Bool qeval_ToInt16(const Expression *value, int *out_integer) {
 }
 
 static Bool qeval_ToString(const Expression *value, utf8 *buffer, int bufferSize) {
-    utf8 *dest, *destend; const utf8 *ptr;
+    utf8 *dest, *destend; const utf8 *ptr, *ptrend;
+    int ch, digit;
 
     switch (value->type)
     {
         case TYPE_ASTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
-            ptr=value->x.astring.start; while(ptr<value->x.astring.end) {
-                safecpy(dest,destend,ptr);
-            }
+            ptr=value->x.astring.start; ptrend=value->x.astring.end;
+            do {
+                while (ptr<ptrend && *ptr!=CH_ASMSTRING) { safecpy(dest,destend,ptr); }
+                if  (ptr<ptrend) { safecpy_char(dest,destend,CH_ASMSTRING); ptr+=2; }
+            } while (ptr<ptrend);
             safecpy_end(dest,destend);
             return TRUE;
 
         case TYPE_CSTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
             ptr=value->x.cstring.start; while(ptr<value->x.cstring.end) {
-                safecpy(dest,destend,ptr);
+                if (ptr[0]!=CH_STRING_ESCAPE) { safecpy(dest,destend,ptr); }
+                else {
+                    switch (ptr[1]) {
+                        case 'a' : safecpy_char(dest,destend,0x07); ptr+=2; break; /* audible bell */
+                        case 'b' : safecpy_char(dest,destend,0x08); ptr+=2; break; /* backspce */
+                        case 'e' : safecpy_char(dest,destend,0x1B); ptr+=2; break; /* escape character */
+                        case 'f' : safecpy_char(dest,destend,0x0C); ptr+=2; break; /* form feed - new page */
+                        case 'n' : safecpy_char(dest,destend,0x0A); ptr+=2; break; /* line feed - new line */
+                        case 'r' : safecpy_char(dest,destend,0x0D); ptr+=2; break; /* carriage return */
+                        case 't' : safecpy_char(dest,destend,0x09); ptr+=2; break; /* horizontal tab */
+                        case 'v' : safecpy_char(dest,destend,0x0B); ptr+=2; break; /* vertical tab */
+                        case '\\': safecpy_char(dest,destend,0x5C); ptr+=2; break; /* backslash */
+                        case '\'': safecpy_char(dest,destend,0x27); ptr+=2; break; /* single quote */
+                        case '"' : safecpy_char(dest,destend,0x22); ptr+=2; break; /* double quote */
+                        case 'x' : /* a hexadecimal number */
+                            if ( (digit=hexvalue(ptr[2]))>=0 ) { ch=digit; ptr+=3;
+                                if ( (digit=hexvalue(*ptr))>=0 ) { ch=digit+(ch*16); ++ptr; }
+                                safecpy_char(dest,destend,ch);
+                            }
+                            break;
+                        default: /* a octal number */
+                            if ( (digit=octvalue(ptr[1]))>=0 ) { ch=digit; ptr+=2; 
+                                if ( (digit=octvalue(*ptr))>=0 ) { ch=digit+(ch*8); ++ptr; 
+                                    if ( (digit=octvalue(*ptr))>=0 ) { ch=digit+(ch*8); ++ptr; }
+                                }
+                                safecpy_char(dest,destend,ch);
+                            } else {
+                                /* a unknown escape sequence */
+                                safecpy_two(dest,destend,ptr);
+                            }
+                            break;
+                    }
+                }
             }
             safecpy_end(dest,destend);
             return TRUE;

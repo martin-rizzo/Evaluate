@@ -5,15 +5,15 @@ PRINT 'Hello World'
 
 ; testing quotes
 ; --------------
-PRINT ' ''The "BEST" world''   = ', 'The "BEST" world'
-PRINT ' "The ''BEST'' world"   = ', "The 'BEST' world"
-PRINT ' "The \''BEST\'' world" = ', "The \'BEST\' world"
+PRINT ' ''The "BEST" world''     = ', 'The "BEST" world'
+PRINT ' "The ''BEST'' world"     = ', "The 'BEST' world"
+PRINT ' "The \''BEST\'' world"   = ', "The \'BEST\' world"
 PRINT ' "The \"BEST\" world"   = ', "The \"BEST\" world"
 
 ; testing escape sequences
 ; ------------------------
-PRINT ' "\t\tTab1\t\tTab2"     = ', "\t\tTab1\t\tTab2"
-PRINT ' "\nline1\nline2"       = ', "\nline1\nline2"
+PRINT ' "#tab1\t>tab2\t>tab3"  = ', "#tab1\t>tab2\t>tab3"
+PRINT ' "#lin1\n>lin2\n>lin3"  = ', "#lin1\n>lin2\n>lin3"
 PRINT ' "C:\\WINDOWS\\DIR"     = ', "C:\\WINDOWS\\DIR"
 PRINT ' "8-|"                  = ', "8-|"
 PRINT ' "\070\055\174"         = ', "\070\055\174"
