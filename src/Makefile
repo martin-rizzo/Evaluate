@@ -28,7 +28,7 @@ clean:
 	$(RM) $(TARGET) $(TARGET_DBG)
 
 run: $(TARGET_DBG)
-	./$(TARGET_DBG) $(EX_DIR)/test1.txt
+	./$(TARGET_DBG) $(EX_DIR)/01_STRINGS.txt
 
 
 $(TARGET): $(SRC)
