@@ -35,10 +35,12 @@
 #include <ctype.h>
 #include <assert.h>
 #define VERSION "0.1"                 /* < QEVAL current version                        */
-#define MIN_FILE_SIZE   (0L)          /* < minimum size for loadable files (in bytes)   */
+#define MIN_FILE_SIZE   (100000L)          /* < minimum size for loadable files (in bytes)   */
 #define MAX_FILE_SIZE   (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
 #define MAX_ERROR_COUNT (32)          /* < maximum number of errors able to be reported */
 #define MAX_NAME_LEN    (63)          /* < maximum length for names of labels, opcodes, symbols, etc (in bytes) */
+#define MAX_ERRSTR_LEN  (63)          /* < ... */
+#define MAX_ERRMSG_LEN  (63)          /* < ... */
 #define CALC_STACK_SIZE (256)         /* < the calculator's stack size in number of elements */
 
 
@@ -58,9 +60,9 @@ typedef enum StdChars_ {
 
 /* supported errors */
 typedef enum ErrorID_ {
-    SUCCESS=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_BIG, ERR_NOT_ENOUGH_MEMORY, ERR_INT8_OUT_OF_RANGE,
-    ERR_INT16_OUT_OF_RANGE, ERR_BITNUM_OUT_OF_RANGE, ERR_INVALID_EXPRESSION, ERR_INVALID_IMODE,
-    ERR_UNEXPECTED_PARENTHESIS, ERR_INVALID_RST_ADDRESS, ERR_DISP_MUST_BE_ZERO,
+    SUCCESS=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_LARGE, ERR_FILE_TOO_SMALL, ERR_NOT_ENOUGH_MEMORY,
+    ERR_INT8_OUT_OF_RANGE,  ERR_INT16_OUT_OF_RANGE, ERR_BITNUM_OUT_OF_RANGE, ERR_INVALID_EXPRESSION,
+    ERR_INVALID_IMODE, ERR_UNEXPECTED_PARENTHESIS, ERR_INVALID_RST_ADDRESS, ERR_DISP_MUST_BE_ZERO,
     ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
 } ErrorID;
 
@@ -81,10 +83,7 @@ static const Operator OpParenthesis = {-1,"",255};
 static const Operator OpSafeGuard   = {-1,"",255};
 
 
-typedef struct Error { ErrorID id; const utf8 *filename; int line; } Error;
-
-
-
+typedef struct Error { ErrorID id; const utf8 *filename, *str; int line; } Error;
 
 typedef enum ValueType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_INTEGER, TYPE_ASTRING, TYPE_CSTRING } ValueType;
 
@@ -136,7 +135,22 @@ static int octvalue   (int ch) { return INRANGE(ch,'0','7') ? ch-'0' : -1; }
 #define skipendofline(ptr) (ptr[0]=='\n' && ptr[1]=='\r') || (ptr[0]=='\r' && ptr[1]=='\n') ? ptr+=2 : ++ptr;
 #define skipblankspaces(ptr) while ( isblank(*ptr) ) { ++ptr; }
 
+static const utf8 * stralloc(const utf8 *str, int maxlen) {
+    utf8 *dest; size_t len;
+    if (!str) { return NULL; }
+    len=strlen(str); if (maxlen>0 && len>maxlen) { len=maxlen; }
+    dest=malloc(len+1); memcpy(dest,str,len); dest[len]='\0';
+    if (len==maxlen && len>=2) { dest[len-2]=dest[len-1]='.'; }
+    return dest;
+}
 
+static const utf8 * strblend(utf8 *buffer, const utf8 *message, const utf8 *str) {
+    utf8 *dest=buffer; const utf8 *ptr=message;
+    while (*ptr!='$' && *ptr!='\0') { *dest++=*ptr++; }
+    if (*ptr=='$') { ++ptr; while (*str!='\0') { *dest++=*str++; } while (*ptr!='\0') { *dest++=*ptr++; } }
+    *dest='\0';
+    return buffer;
+}
 
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
@@ -166,39 +180,45 @@ static int         theErrorCount = 0;
     }
 #endif
 
-static Bool err(ErrorID errorID) {
-    Error *error;
-    if (theErrorCount<MAX_ERROR_COUNT) {
+#define err(id) err2(id,NULL);
+
+static Bool err2(ErrorID errorID, const utf8 *str) {
+    Error *error; if (theErrorCount<MAX_ERROR_COUNT) {
         error = &theErrors[theErrorCount++];
-        error->filename = theFileName;
-        error->line     = theLineNumber;
-        error->id       = errorID;
+        error->id=errorID;
+        error->filename=stralloc(theFileName,-1);
+        error->line=theLineNumber;
+        error->str=stralloc(str,MAX_ERRSTR_LEN);
     }
-    return (errorID==SUCCESS);
+    return (errorID!=SUCCESS);
 }
 
 static Bool err_PrintErrorMessages(void) {
     const utf8 *message; Error *error=theErrors; int count=theErrorCount;
+    utf8 buffer[ (MAX_ERRMSG_LEN+1)+(MAX_ERRSTR_LEN+1) ];
+
     while (--count>=0) {
         switch (error->id) {
             case SUCCESS:                message = "SUCCESS"; break;
-            case ERR_FILE_NOT_FOUND:     message = "File not found";    break;
-            case ERR_FILE_TOO_BIG:       message = "File too big";      break;
-            case ERR_NOT_ENOUGH_MEMORY:  message = "Not enough memory"; break;
-            case ERR_INT8_OUT_OF_RANGE:  message = "The 8-bit value is out of range"; break;
-            case ERR_INT16_OUT_OF_RANGE: message = "The 16-bit value is out of range"; break;
-            case ERR_BITNUM_OUT_OF_RANGE:message = "The bit number is out of range (valid range is: 0-7)"; break;
-            case ERR_INVALID_EXPRESSION: message = "Invalid expression"; break;
-            case ERR_INVALID_IMODE:      message = "Invalid interruption mode"; break;
-            case ERR_UNEXPECTED_PARENTHESIS: message = "Unexpected ')' (closing parenthesis)"; break;
-            case ERR_INVALID_RST_ADDRESS:message = "Invalid RST address"; break;
-            case ERR_DISP_MUST_BE_ZERO:  message = "No displacement can be added to the index register"; break;
-            case ERR_DISP_OUT_OF_RANGE:  message = "The displacement is out of range"; break;
-            case ERR_UNKNOWN_PARAM:      message = "Unknown parameter"; break;
-            default:                     message = "Unknown error";     break;
+            case ERR_FILE_NOT_FOUND:     message = "file not found";    break;
+            case ERR_FILE_TOO_LARGE:     message = "the file '$' is too large"; break;
+            case ERR_FILE_TOO_SMALL:     message = "the file '$' is too small"; break;
+            case ERR_NOT_ENOUGH_MEMORY:  message = "not enough memory"; break;
+            case ERR_INT8_OUT_OF_RANGE:  message = "the 8-bit value is out of range"; break;
+            case ERR_INT16_OUT_OF_RANGE: message = "the 16-bit value is out of range"; break;
+            case ERR_BITNUM_OUT_OF_RANGE:message = "the bit number is out of range (valid range is: 0-7)"; break;
+            case ERR_INVALID_EXPRESSION: message = "invalid expression"; break;
+            case ERR_INVALID_IMODE:      message = "invalid interruption mode"; break;
+            case ERR_UNEXPECTED_PARENTHESIS: message = "unexpected ')' (closing parenthesis)"; break;
+            case ERR_INVALID_RST_ADDRESS:message = "invalid RST address"; break;
+            case ERR_DISP_MUST_BE_ZERO:  message = "no displacement can be added to the index register"; break;
+            case ERR_DISP_OUT_OF_RANGE:  message = "the displacement is out of range"; break;
+            case ERR_UNKNOWN_PARAM:      message = "unknown parameter"; break;
+            default:                     message = "unknown error";     break;
         }
-        if (error->line) { printf("%s:%d: %s\n", error->filename, error->line, message); }
-        else             { printf("%s\n", message); }
+        if (error->str)  { message=strblend(buffer,message,error->str); }
+        if (error->line) { printf("%s:%d: %s %s\n", error->filename, error->line, "error:", message); }
+        else             { printf("%s %s\n", "error:", message); }
         ++error;
     }
     return (theErrorCount>0);
@@ -619,7 +639,8 @@ static Bool main_EvaluateFile(const utf8 *filename) {
     file = fopen(filename,"rb");
     if ( !file ) { return err(ERR_FILE_NOT_FOUND); }
     fseek(file, 0L, SEEK_END); fileSize = ftell(file); rewind(file);
-    if ( fileSize>MAX_FILE_SIZE ) { fclose(file); return err(ERR_FILE_TOO_BIG); }
+    if ( fileSize<MIN_FILE_SIZE ) { fclose(file); return err2(ERR_FILE_TOO_SMALL,filename); }
+    if ( fileSize>MAX_FILE_SIZE ) { fclose(file); return err2(ERR_FILE_TOO_LARGE,filename); }
     fileBuffer = malloc(fileSize+1);
     if ( !fileBuffer ) { fclose(file); return err(ERR_NOT_ENOUGH_MEMORY); }
     fread(fileBuffer, fileSize, 1, file);
