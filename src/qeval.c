@@ -35,7 +35,7 @@
 #include <ctype.h>
 #include <assert.h>
 #define VERSION "0.1"                 /* < QEVAL current version                        */
-#define MIN_FILE_SIZE   (100000L)          /* < minimum size for loadable files (in bytes)   */
+#define MIN_FILE_SIZE   (0)           /* < minimum size for loadable files (in bytes)   */
 #define MAX_FILE_SIZE   (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
 #define MAX_ERROR_COUNT (32)          /* < maximum number of errors able to be reported */
 #define MAX_NAME_LEN    (63)          /* < maximum length for names of labels, opcodes, symbols, etc (in bytes) */
@@ -87,7 +87,7 @@ typedef struct Error { ErrorID id; const utf8 *filename, *str; int line; } Error
 
 typedef enum ValueType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_INTEGER, TYPE_ASTRING, TYPE_CSTRING } ValueType;
 
-typedef struct Expression {
+typedef struct Value {
     ValueType type;
     union {
         struct { const utf8 *ptr;         } unsolved;
@@ -95,7 +95,7 @@ typedef struct Expression {
         struct { const utf8 *start, *end; } astring;
         struct { const utf8 *start, *end; } cstring;
     } x;
-} Expression;
+} Value;
 
 
 
@@ -169,7 +169,7 @@ static int         theErrorCount = 0;
 #ifdef NDEBUG
 #   define DLOG_VALUE(value)
 #else
-    void DLOG_VALUE(const Expression value) {
+    void DLOG_VALUE(const Value value) {
         switch (value.type) {
             case TYPE_UNSOLVED: DLOG(("<Unsolved>")); break;
             case TYPE_INTEGER:  DLOG(("<Integer value=%d>", value.x.integer.value)); break;
@@ -323,7 +323,7 @@ static Bool ReadOperator(const utf8 *ptr, const utf8 **out_end, const Operator *
 /*=================================================================================================================*/
 #pragma mark - > MATHEMATICAL EXPRESSION CALCULATION
 
-static Expression theValue;
+static Value theValue;
 struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
 struct { int             array[CALC_STACK_SIZE]; int i; } valueStack;
 
@@ -366,7 +366,7 @@ static float SolveFloatCalculation(const Operator *operator, float arg1, float a
 }
 
 
-static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
+static Value * StartCalculation(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
     const Operator* op;
     int value; utf8 name[MAX_NAME_LEN]; Bool continueScanning;
@@ -448,9 +448,9 @@ static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
 #pragma mark - > QEVAL
 
 /*
-    named-map     :  name -> [Expression]
-    delayed-list  :  [Expressions]
-    unsolved-list :  [Expressions]
+    named-map     :  name -> [Value]
+    delayed-list  :  [Values]
+    unsolved-list :  [Values]
 
 
     LD HL, delayed           -> exp = Solve("delayed"); AddToDelayList(exp, address, linenum)
@@ -461,35 +461,29 @@ static Expression * StartCalculation(const utf8 *start, const utf8 **out_end) {
 
 */
 
-Expression * theDelayedList;
-Expression * theUnsolvedList;
+Value * theImportantList;
+Value * theUnsolvedList;
 
 
-static Expression * qeval_MakeExpression(const utf8 *start, const utf8 **out_end) {
-    const utf8 *ptr = start;
-    Expression *expression = malloc(sizeof(Expression));
-    expression->type = TYPE_UNSOLVED;
-    if (out_end) { (*out_end)=ptr; }
-    return expression;
+static Bool qeval_AddConstant(const utf8 *name, Value *value) {
+    return TRUE;
 }
-
-
-static Bool qeval_AddNamedExpression(const utf8 *name, Expression *expression) {
-
+static Bool qeval_AddVariable(const utf8 *name, Value *value) {
+    assert( FALSE ); /* not implemented yet */
     return TRUE;
 }
 
-static Bool qeval_AddDelayedExpression(int user1, int user2, Expression *expression) {
+static Bool qeval_AddImportantValue(Value *value, int user1, int user2) {
     /*
-    expression->user1 = user1;
-    expression->user2 = user2;
-    expression->prev = last;
-    last->next = expression;
+    value->user1 = user1;
+    value->user2 = user2;
+    value->prev = last;
+    last->next  = value;
     */
     return TRUE;
 }
 
-static Bool qeval_ToInt16(const Expression *value, int *out_integer) {
+static Bool qeval_ToInt16(const Value *value, int *out_integer) {
     switch (value->type) {
         case TYPE_INTEGER:
             (*out_integer) = value->x.integer.value;
@@ -499,7 +493,7 @@ static Bool qeval_ToInt16(const Expression *value, int *out_integer) {
     }
 }
 
-static Bool qeval_ToString(const Expression *value, utf8 *buffer, int bufferSize) {
+static Bool qeval_ToString(const Value *value, utf8 *buffer, int bufferSize) {
     utf8 *dest, *destend; const utf8 *ptr, *ptrend;
     int ch, digit;
 
@@ -560,22 +554,22 @@ static Bool qeval_ToString(const Expression *value, utf8 *buffer, int bufferSize
     }
 }
 
-#define qeval_FirstDelayedExpression() theDelayedList
-#define qeval_NextDelayedExpression(exp) ((exp)->nextDelayed)
+#define qeval_FirstImportantValue() theImportantList
+#define qeval_NextImportantValue(value) ((value)->nextImportant)
 
 /*=================================================================================================================*/
 #pragma mark - > MAIN
 
 
 static void main_InitGlobals() {
-    theFileName     = NULL;
-    theLineNumber   = 0;
-    theErrorCount   = 0;
-    theDelayedList  = NULL;
-    theUnsolvedList = NULL;
+    theFileName      = NULL;
+    theLineNumber    = 0;
+    theErrorCount    = 0;
+    theImportantList = NULL;
+    theUnsolvedList  = NULL;
 }
 
-static void main_PrintValue(const Expression *value) {
+static void main_PrintValue(const Value *value) {
     utf8 str[1024]; int integer;
     if      (qeval_ToInt16(value,&integer))         { printf("%d ",integer); }
     else if (qeval_ToString(value,str,sizeof(str))) { printf("%s",str);      }
@@ -586,7 +580,7 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
     Bool printByDefault = FALSE;
     Bool continueScanning;
-    Expression *value;
+    Value *value;
     const utf8 *ptr = start;
     utf8 name[128], *dest, *destend;
 
@@ -603,14 +597,14 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
     if ( *ptr=='=' ) {
         value = StartCalculation(ptr+1,&ptr);
         /* DLOG_VALUE(*value); */
-        /* qeval_AddNamedExpression(name,expression); */
+        /* qeval_AddConstantValue(name,value); */
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         do {
             value = StartCalculation(ptr,&ptr);
             main_PrintValue(value);
-            /* AddDelayedExpression(linenum,0,expression); */
+            /* qeval_AddImportantValue(value,linenum,0); */
             continueScanning = (*ptr==CH_PARAM_SEP);
             if  (continueScanning) { ++ptr; }
         } while (continueScanning); 
@@ -659,14 +653,14 @@ static Bool main_EvaluateFile(const utf8 *filename) {
     return TRUE;
 }
 
-static void main_PrintDelayedExpressions() {
+static void main_PrintImportantValues() {
     /*
     utf8 str[1024];
-    Expression *expression = qeval_FirstDelayedExpression();
-    while (expression) {
-        if ( qeval_ToString(expression,str,sizeof(str)) ) { printf("%s",str); }
-        else                                              { printf("<?>");  }
-        expression = qeval_NextDelayedExpression(expression);
+    Value *value = qeval_FirstImportantValue();
+    while (value) {
+        if ( qeval_ToString(value,str,sizeof(str)) ) { printf("%s",str); }
+        else                                         { printf("<?>");  }
+        value = qeval_NextImportantValue(value);
     }
     */
 }
@@ -708,7 +702,7 @@ int main(int argc, char *argv[]) {
         main_InitGlobals();
         main_EvaluateFile(filename);
         if (!err_PrintErrorMessages()) {
-             main_PrintDelayedExpressions();
+             main_PrintImportantValues();
         }
     }
     return 0;
