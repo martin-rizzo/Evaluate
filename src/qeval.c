@@ -60,7 +60,7 @@ typedef enum StdChars_ {
 
 /* supported errors */
 typedef enum ErrorID_ {
-    SUCCESS=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_LARGE, ERR_FILE_TOO_SMALL, ERR_NOT_ENOUGH_MEMORY,
+    ERR_NO_ERROR=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_LARGE, ERR_FILE_TOO_SMALL, ERR_NOT_ENOUGH_MEMORY,
     ERR_INT8_OUT_OF_RANGE,  ERR_INT16_OUT_OF_RANGE, ERR_BITNUM_OUT_OF_RANGE, ERR_INVALID_EXPRESSION,
     ERR_INVALID_IMODE, ERR_UNEXPECTED_PARENTHESIS, ERR_INVALID_RST_ADDRESS, ERR_DISP_MUST_BE_ZERO,
     ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
@@ -99,7 +99,7 @@ typedef struct Value {
 
 
 
-const char * ValueTypeToString(ValueType type) {
+static const char * ValueTypeToString(ValueType type) {
     switch (type) {
         case TYPE_UNSOLVED: return "UNSOLVED"; 
         case TYPE_EMPTY:    return "EMPTY";
@@ -144,12 +144,14 @@ static const utf8 * stralloc(const utf8 *str, int maxlen) {
     return dest;
 }
 
-static const utf8 * strblend(utf8 *buffer, const utf8 *message, const utf8 *str) {
-    utf8 *dest=buffer; const utf8 *ptr=message;
-    while (*ptr!='$' && *ptr!='\0') { *dest++=*ptr++; }
-    if (*ptr=='$') { ++ptr; while (*str!='\0') { *dest++=*str++; } while (*ptr!='\0') { *dest++=*ptr++; } }
-    *dest='\0';
-    return buffer;
+static const utf8 * strreplace(utf8 *buffer, const utf8 *message, int charToReplace, const utf8 *replacement) {
+    utf8 *dest=buffer; const utf8 *ptr=message, *sour;
+    assert( buffer!=NULL && message!=NULL );
+    while (*ptr!='\0') {
+        if (*ptr==charToReplace && replacement) { ++ptr; sour=replacement; while (*sour!='\0') { *dest++=*sour++; } }
+        else { *dest++=*ptr++; }
+    }
+    *dest='\0'; return buffer;
 }
 
 /*=================================================================================================================*/
@@ -169,7 +171,7 @@ static int         theErrorCount = 0;
 #ifdef NDEBUG
 #   define DLOG_VALUE(value)
 #else
-    void DLOG_VALUE(const Value value) {
+    static void DLOG_VALUE(const Value value) {
         switch (value.type) {
             case TYPE_UNSOLVED: DLOG(("<Unsolved>")); break;
             case TYPE_INTEGER:  DLOG(("<Integer value=%d>", value.x.integer.value)); break;
@@ -180,9 +182,12 @@ static int         theErrorCount = 0;
     }
 #endif
 
-#define err(id) err2(id,NULL);
-
-static Bool err2(ErrorID errorID, const utf8 *str) {
+/**
+ * Reports a error
+ * @param errorID  The error identifier, ex: ERR_CANNOT_READ_FILE
+ * @param str      The optional text attached to the error reported (it can be NULL)
+ */
+static Bool error(ErrorID errorID, const utf8 *str) {
     Error *error; if (theErrorCount<MAX_ERROR_COUNT) {
         error = &theErrors[theErrorCount++];
         error->id=errorID;
@@ -190,16 +195,16 @@ static Bool err2(ErrorID errorID, const utf8 *str) {
         error->line=theLineNumber;
         error->str=stralloc(str,MAX_ERRSTR_LEN);
     }
-    return (errorID!=SUCCESS);
+    return (errorID==ERR_NO_ERROR);
 }
 
-static Bool err_PrintErrorMessages(void) {
+static Bool printErrorMessages(void) {
     const utf8 *message; Error *error=theErrors; int count=theErrorCount;
     utf8 buffer[ (MAX_ERRMSG_LEN+1)+(MAX_ERRSTR_LEN+1) ];
 
     while (--count>=0) {
         switch (error->id) {
-            case SUCCESS:                message = "SUCCESS"; break;
+            case ERR_NO_ERROR:           message = "SUCCESS"; break;
             case ERR_FILE_NOT_FOUND:     message = "file not found";    break;
             case ERR_FILE_TOO_LARGE:     message = "the file '$' is too large"; break;
             case ERR_FILE_TOO_SMALL:     message = "the file '$' is too small"; break;
@@ -216,7 +221,7 @@ static Bool err_PrintErrorMessages(void) {
             case ERR_UNKNOWN_PARAM:      message = "unknown parameter"; break;
             default:                     message = "unknown error";     break;
         }
-        if (error->str)  { message=strblend(buffer,message,error->str); }
+        message=strreplace(buffer,message,'$',error->str);
         if (error->line) { printf("%s:%d: %s %s\n", error->filename, error->line, "error:", message); }
         else             { printf("%s %s\n", "error:", message); }
         ++error;
@@ -411,7 +416,7 @@ static Value * StartCalculation(const utf8 *start, const utf8 **out_end) {
             }
             else if (*ptr==')') {
                 while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
-                if (cPOP(opStack)==&OpSafeGuard) { err(ERR_UNEXPECTED_PARENTHESIS); return NULL; }
+                if (cPOP(opStack)==&OpSafeGuard) { error(ERR_UNEXPECTED_PARENTHESIS,0); return NULL; }
             }
             else if ( ReadLiteral(ptr,&ptr,&value) ) {
                 cPUSH(valueStack, value);
@@ -424,7 +429,7 @@ static Value * StartCalculation(const utf8 *start, const utf8 **out_end) {
                 cPUSH(opStack,op);
             }
             else {
-                err(ERR_INVALID_EXPRESSION);
+                error(ERR_INVALID_EXPRESSION,0);
                 return &theValue;
             }
             skipblankspaces(ptr);
@@ -432,7 +437,7 @@ static Value * StartCalculation(const utf8 *start, const utf8 **out_end) {
 
         /* process any pending operator before return */
         while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
-        if ( valueStack.i!=3 || opStack.i!=2 ) { err(ERR_INVALID_EXPRESSION); return &theValue; }
+        if ( valueStack.i!=3 || opStack.i!=2 ) { error(ERR_INVALID_EXPRESSION,0); return &theValue; }
 
         theValue.type          = TYPE_INTEGER;
         theValue.x.integer.value = cPOP(valueStack);
@@ -631,12 +636,12 @@ static Bool main_EvaluateFile(const utf8 *filename) {
 
     /* load the whole file into the buffer */
     file = fopen(filename,"rb");
-    if ( !file ) { return err(ERR_FILE_NOT_FOUND); }
+    if ( !file ) { return error(ERR_FILE_NOT_FOUND,filename); }
     fseek(file, 0L, SEEK_END); fileSize = ftell(file); rewind(file);
-    if ( fileSize<MIN_FILE_SIZE ) { fclose(file); return err2(ERR_FILE_TOO_SMALL,filename); }
-    if ( fileSize>MAX_FILE_SIZE ) { fclose(file); return err2(ERR_FILE_TOO_LARGE,filename); }
+    if ( fileSize<MIN_FILE_SIZE ) { fclose(file); return error(ERR_FILE_TOO_SMALL,filename); }
+    if ( fileSize>MAX_FILE_SIZE ) { fclose(file); return error(ERR_FILE_TOO_LARGE,filename); }
     fileBuffer = malloc(fileSize+1);
-    if ( !fileBuffer ) { fclose(file); return err(ERR_NOT_ENOUGH_MEMORY); }
+    if ( !fileBuffer ) { fclose(file); return error(ERR_NOT_ENOUGH_MEMORY,0); }
     fread(fileBuffer, fileSize, 1, file);
     fileBuffer[fileSize]=CH_ENDFILE;
     fclose(file);
@@ -701,7 +706,7 @@ int main(int argc, char *argv[]) {
     if (filename) {
         main_InitGlobals();
         main_EvaluateFile(filename);
-        if (!err_PrintErrorMessages()) {
+        if (!printErrorMessages()) {
              main_PrintImportantValues();
         }
     }
