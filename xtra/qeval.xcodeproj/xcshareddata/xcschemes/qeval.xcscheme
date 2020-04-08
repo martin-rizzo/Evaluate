@@ -56,6 +56,10 @@
             argument = "../xtra/examples/01_STRINGS.txt"
             isEnabled = "YES">
          </CommandLineArgument>
+         <CommandLineArgument
+            argument = "../xtra/examples/02_INTEGERS.txt"
+            isEnabled = "YES">
+         </CommandLineArgument>
       </CommandLineArguments>
    </LaunchAction>
    <ProfileAction

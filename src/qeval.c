@@ -114,7 +114,6 @@ static const char * ValueTypeToString(ValueType type) {
 #pragma mark - > HELPER FUNCTIONS
 
 #define INRANGE(c,min,max) (min<=c && c<=max)
-#define PARAM_IS(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
 
 #define safecpy_begin(dest,destend,buf,size) dest=&buf[0]; destend=&buf[size-1];
 #define safecpy(dest,destend,ptr)  if (dest<destend) { *dest++ = *ptr; } ++ptr;
@@ -673,10 +672,15 @@ static void main_PrintImportantValues() {
 /*=================================================================================================================*/
 #pragma mark - > MAIN
 
+#define PARAM_IS(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
+#define MAX_FILES_TO_EVALUATE 256
+
+
 int main(int argc, char *argv[]) {
-    int i;
-    Bool printHelpAndExit=FALSE, printVersionAndExit=FALSE;
-    const utf8 *filename=NULL, *param;
+    int i, numberOfFiles;
+    Bool printHelpAndExit, printVersionAndExit;
+    const utf8 *filePaths[MAX_FILES_TO_EVALUATE];
+    const utf8 *param;
     const utf8 *help[] = {
         "USAGE: qeval [options] file-to-evaluate","",
         "  OPTIONS:",
@@ -686,8 +690,13 @@ int main(int argc, char *argv[]) {
     };
 
     /* process all parameters */
+    numberOfFiles       = 0;
+    printHelpAndExit    = FALSE;
+    printVersionAndExit = FALSE;
+    memset(filePaths,0,sizeof(filePaths));
+    
     for (i=1; i<argc; ++i) { param=argv[i];
-        if ( param[0]!='-' ) { filename=param; }
+        if ( param[0]!='-' ) { if (numberOfFiles<MAX_FILES_TO_EVALUATE) { filePaths[numberOfFiles++]=param; } }
         else if ( PARAM_IS(param,"-h","--help" ) )   { printHelpAndExit = TRUE; }
         else if ( PARAM_IS(param,"-v","--version") ) { printVersionAndExit = TRUE; }
 
@@ -703,9 +712,9 @@ int main(int argc, char *argv[]) {
         return 0;
     }
     /* if a filename was provided then evaluate it! */
-    if (filename) {
+    if (numberOfFiles>0) {
         main_InitGlobals();
-        main_EvaluateFile(filename);
+        for (i=0; i<numberOfFiles; ++i) { main_EvaluateFile(filePaths[i]); }
         if (!printErrorMessages()) {
              main_PrintImportantValues();
         }
