@@ -1,28 +1,31 @@
 ; Integer literals test
 
 
-PRINT "200         = ",  200          ; decimal
-PRINT "200d        = ",  200d         ; decimal
-PRINT "0200d       = ",  0200d        ; decimal
-PRINT "0d200       = ",  0d200        ; decimal
-PRINT "$c8         = ",  $c8          ; hex
-PRINT "#c8         = ",  #c8          ; hex
-PRINT "0c8h        = ",  0c8h         ; hex
-PRINT "0xc8        = ",  0xc8         ; hex
-PRINT "0hc8        = ",  0hc8         ; hex
-PRINT "0310        = ",  0310         ; octal
-PRINT "310o        = ",  310o         ; octal
-PRINT "310q        = ",  310q         ; octal
-PRINT "0o310       = ",  0o310        ; octal
-PRINT "0q310       = ",  0q310        ; octal
-PRINT "11001000b   = ",  11001000b    ; binary
-PRINT "11001000y   = ",  11001000y    ; binary
-PRINT "0b11001000  = ",  0b11001000   ; binary
-PRINT "0y11001000  = ",  0y11001000   ; binary
-PRINT "1100_1000b  = ",  1100_1000b   ; binary with grouped bits
-PRINT "1100_1000y  = ",  1100_1000y   ; binary with grouped bits
-PRINT "0b1100_1000 = ",  0b1100_1000  ; binary with grouped bits
-PRINT "0y1100_1000 = ",  0y1100_1000  ; binary with grouped bits
-PRINT "'a'         = ",  'a'          ; character code (8bits)
-PRINT "'ab'        = ",  'ab'         ; character code (16bits)
+PRINT "TESTING INTEGER LITERALS"
+PRINT "------------------------"
+PRINT "   200         = ",  200            ; decimal
+PRINT "   200d        = ",  200d           ; decimal
+PRINT "   0200d       = ",  0200d          ; decimal
+PRINT "   0d200       = ",  0d200          ; decimal
+PRINT "   $c8         = ",  $c8            ; hex
+PRINT "   #c8         = ",  #c8            ; hex
+PRINT "   0c8h        = ",  0c8h           ; hex
+PRINT "   0xc8        = ",  0xc8           ; hex
+PRINT "   0hc8        = ",  0hc8           ; hex
+PRINT "   0310        = ",  0310           ; octal
+PRINT "   310o        = ",  310o           ; octal
+PRINT "   310q        = ",  310q           ; octal
+PRINT "   0o310       = ",  0o310          ; octal
+PRINT "   0q310       = ",  0q310          ; octal
+PRINT "   11001000b   = ",  11001000b      ; binary
+PRINT "   11001000y   = ",  11001000y      ; binary
+PRINT "   0b11001000  = ",  0b11001000     ; binary
+PRINT "   0y11001000  = ",  0y11001000     ; binary
+PRINT "   1100_1000b  = ",  1100_1000b     ; binary with grouped bits
+PRINT "   1100_1000y  = ",  1100_1000y     ; binary with grouped bits
+PRINT "   0b1100_1000 = ",  0b1100_1000    ; binary with grouped bits
+PRINT "   0y1100_1000 = ",  0y1100_1000    ; binary with grouped bits
+PRINT "   'a'         = ",  'a'            ; character code (8bits)
+PRINT "   'ab'        = ",  'ab'           ; character code (16bits)
+PRINT ""
 
