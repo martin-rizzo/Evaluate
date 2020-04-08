@@ -3,39 +3,54 @@
 CC = cc
 RM = rm -f
 BIN_DIR = ../bin
-EX_DIR  = ../examples
+EXAMPLE = ../xtra/examples/01_STRINGS.txt
 
-TARGET        = $(BIN_DIR)/qeval
-TARGET_DBG    = $(BIN_DIR)/qeval-dbg
-SRC           = qeval.c
-DEBUG_FLAGS   = -O0 -D_DEBUG
-RELEASE_FLAGS = -Os -DNDEBUG
-ANSI_C_FLAGS  = -ansi
-ERROR_FLAGS   = -Wall -pedantic-errors -Wno-unused-function
-CFLAGS        = $(ANSI_C_FLAGS) $(ERROR_FLAGS)
+TARGET_RELEASE = $(BIN_DIR)/qeval
+TARGET_DEBUG   = $(BIN_DIR)/qeval-dbg
+SRC            = qeval.c
+
+## compiler flags ##
+CONFIG_RELEASE = -Os -DNDEBUG
+CONFIG_DEBUG   = -O0 -D_DEBUG
+CFLAGS_ANSI    = -ansi
+CFLAGS_ERRORS  = -Wall -pedantic-errors -Wno-unused-function
+CFLAGS         = $(CFLAGS_ANSI) $(CFGLAS_ERRORS)
 
 
 
-.PHONY: all debug release clean run
+.PHONY: all debug release test clean
 
 all: debug
 
-debug: $(TARGET_DBG)
 
-release: $(TARGET)
+#----------------------------------------------
+# DEBUG
+#
+debug: $(TARGET_DEBUG)
 
-clean:
-	$(RM) $(TARGET) $(TARGET_DBG)
+$(TARGET_DEBUG): $(SRC)
+	$(CC) $(CFLAGS) $(CONFIG_DEBUG) $^ -o $@
 
-run: $(TARGET_DBG)
-	./$(TARGET_DBG) $(EX_DIR)/01_STRINGS.txt
 
+#-----------------------------------------------
+# RELEASE
+#
+release: $(TARGET_RELEASE)
 
 $(TARGET): $(SRC)
-	$(CC) $(CFLAGS) $(RELEASE_FLAGS) $^ -o $@
-
-$(TARGET_DBG): $(SRC)
-	$(CC) $(CFLAGS) $(DEBUG_FLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $(CONFIG_RELEASE) $^ -o $@
 
 
+#----------------------------------------------
+# TEST
+#
+test: $(TARGET_DEBUG)
+	./$(TARGET_DEBUG) $(EXAMPLE)
+
+
+#-----------------------------------------------
+# CLEAN
+#
+clean:
+	$(RM) $(TARGET_RELEASE) $(TARGET_DEBUG)
 

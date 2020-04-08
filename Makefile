@@ -1,3 +1,3 @@
-all debug release clean run:
+all debug release test clean:
 	$(MAKE) -C src $@
 
