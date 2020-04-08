@@ -34,7 +34,9 @@
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
-#define VERSION "0.1"                 /* < QEVAL current version                        */
+#define VERSION   "0.1"
+#define COPYRIGHT "Copyright (c) 2020 Martin Rizzo"
+
 #define MIN_FILE_SIZE   (0)           /* < minimum size for loadable files (in bytes)   */
 #define MAX_FILE_SIZE   (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
 #define MAX_ERROR_COUNT (32)          /* < maximum number of errors able to be reported */
@@ -60,7 +62,7 @@ typedef enum StdChars_ {
 
 /* supported errors */
 typedef enum ErrorID_ {
-    ERR_NO_ERROR=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_LARGE, ERR_FILE_TOO_SMALL, ERR_NOT_ENOUGH_MEMORY,
+    ERR_NO_ERROR=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_LARGE, ERR_CANNOT_READ_FILE, ERR_NOT_ENOUGH_MEMORY,
     ERR_INT8_OUT_OF_RANGE,  ERR_INT16_OUT_OF_RANGE, ERR_BITNUM_OUT_OF_RANGE, ERR_INVALID_EXPRESSION,
     ERR_INVALID_IMODE, ERR_UNEXPECTED_PARENTHESIS, ERR_INVALID_RST_ADDRESS, ERR_DISP_MUST_BE_ZERO,
     ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
@@ -115,6 +117,7 @@ static const char * ValueTypeToString(ValueType type) {
 
 #define INRANGE(c,min,max) (min<=c && c<=max)
 
+
 #define safecpy_begin(dest,destend,buf,size) dest=&buf[0]; destend=&buf[size-1];
 #define safecpy(dest,destend,ptr)  if (dest<destend) { *dest++ = *ptr; } ++ptr;
 #define safecpy_char(dest,destend,ch) if (dest<destend) { *dest++ = ch; }
@@ -153,6 +156,13 @@ static const utf8 * strreplace(utf8 *buffer, const utf8 *message, int charToRepl
     *dest='\0'; return buffer;
 }
 
+static long fgetsize(FILE* file) {
+    long size;
+    assert( file!=NULL );
+    fseek(file,0L,SEEK_END); size=ftell(file); rewind(file);
+    return size;
+}
+
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
 
@@ -182,6 +192,12 @@ static int         theErrorCount = 0;
 #endif
 
 /**
+ * Global var that indicates whether the program is being successfully executed.
+ * It is TRUE while no error is reported.
+ */
+#define success (theErrorCount==0)
+
+/**
  * Reports a error
  * @param errorID  The error identifier, ex: ERR_CANNOT_READ_FILE
  * @param str      The optional text attached to the error reported (it can be NULL)
@@ -206,7 +222,6 @@ static Bool printErrorMessages(void) {
             case ERR_NO_ERROR:           message = "SUCCESS"; break;
             case ERR_FILE_NOT_FOUND:     message = "file not found";    break;
             case ERR_FILE_TOO_LARGE:     message = "the file '$' is too large"; break;
-            case ERR_FILE_TOO_SMALL:     message = "the file '$' is too small"; break;
             case ERR_NOT_ENOUGH_MEMORY:  message = "not enough memory"; break;
             case ERR_INT8_OUT_OF_RANGE:  message = "the 8-bit value is out of range"; break;
             case ERR_INT16_OUT_OF_RANGE: message = "the 16-bit value is out of range"; break;
@@ -624,38 +639,48 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
     return TRUE;
 }
 
-static Bool main_EvaluateFile(const utf8 *filename) {
-    FILE *file; long fileSize;
-    utf8 *fileBuffer;
-    const utf8 *ptr;
+static utf8 * allocFileBuffer(const utf8* filePath) {
+    FILE *file=NULL; utf8 *fileBuffer=NULL; long fileSize=0;
+    assert(filePath!=NULL);
 
-    /* reset globals */
+    if (success) {
+        file=fopen(filePath,"rb"); if (!file) { error(ERR_FILE_NOT_FOUND,filePath); }
+    }
+    if (success) {
+        fseek(file,0L,SEEK_END); fileSize=ftell(file); rewind(file);
+        if ( fileSize>MAX_FILE_SIZE ) { error(ERR_FILE_TOO_LARGE,filePath); }
+    }
+    if (success) {
+        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { error(ERR_NOT_ENOUGH_MEMORY,0); }
+    }
+    if (success) {
+        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { error(ERR_CANNOT_READ_FILE,filePath); }
+        else { fileBuffer[fileSize]=CH_ENDFILE; }
+    }
+    if (!success) { free(fileBuffer); fileBuffer=NULL; }
+    if (file) { fclose(file); }
+    return fileBuffer;
+}
+
+/*
+static Bool main_EvaluateFile(const utf8 *filename) {
+    const utf8 *ptr, *fileBuffer;
+
     theFileName   = filename;
     theLineNumber = 0;
 
-    /* load the whole file into the buffer */
-    file = fopen(filename,"rb");
-    if ( !file ) { return error(ERR_FILE_NOT_FOUND,filename); }
-    fseek(file, 0L, SEEK_END); fileSize = ftell(file); rewind(file);
-    if ( fileSize<MIN_FILE_SIZE ) { fclose(file); return error(ERR_FILE_TOO_SMALL,filename); }
-    if ( fileSize>MAX_FILE_SIZE ) { fclose(file); return error(ERR_FILE_TOO_LARGE,filename); }
-    fileBuffer = malloc(fileSize+1);
-    if ( !fileBuffer ) { fclose(file); return error(ERR_NOT_ENOUGH_MEMORY,0); }
-    fread(fileBuffer, fileSize, 1, file);
-    fileBuffer[fileSize]=CH_ENDFILE;
-    fclose(file);
-
-    /* evaluate code line by line */
-    ptr=fileBuffer; theLineNumber=1;
-    while ( *ptr!=CH_ENDFILE && theErrorCount==0 ) {
-        main_EvaluateTextLine(ptr,&ptr);
-        ++theLineNumber;
+    fileBuffer = allocFileBuffer(filename);
+    if (fileBuffer) {
+        ptr=fileBuffer; theLineNumber=1;
+        while ( *ptr!=CH_ENDFILE && theErrorCount==0 ) {
+            main_EvaluateTextLine(ptr,&ptr);
+            ++theLineNumber;
+        }
     }
-
-    /* deallocate the buffer and print any error */
-    free(fileBuffer);
-    return TRUE;
+    free((void*)fileBuffer);
+    return success ? TRUE : FALSE;
 }
+*/
 
 static void main_PrintImportantValues() {
     /*
@@ -672,14 +697,12 @@ static void main_PrintImportantValues() {
 /*=================================================================================================================*/
 #pragma mark - > MAIN
 
-#define PARAM_IS(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
-#define MAX_FILES_TO_EVALUATE 256
+#define isOption(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
+#define MAX_FILES 256  /* maximum number of files to evaluate */
 
 
 int main(int argc, char *argv[]) {
-    int i, numberOfFiles;
-    Bool printHelpAndExit, printVersionAndExit;
-    const utf8 *filePaths[MAX_FILES_TO_EVALUATE];
+    int i; const utf8 *fileBuffer, *ptr;
     const utf8 *param;
     const utf8 *help[] = {
         "USAGE: qeval [options] file-to-evaluate","",
@@ -688,37 +711,42 @@ int main(int argc, char *argv[]) {
         "    -v, --version         output version information and exit",
         NULL
     };
-
-    /* process all parameters */
-    numberOfFiles       = 0;
-    printHelpAndExit    = FALSE;
-    printVersionAndExit = FALSE;
-    memset(filePaths,0,sizeof(filePaths));
     
+    int  numberOfFiles       = 0;
+    Bool printHelpAndExit    = argc<=1;
+    Bool printVersionAndExit = FALSE;
+    const utf8 *filePaths[MAX_FILES]; memset(filePaths,0,sizeof(filePaths));
+    /* process all parameters */
     for (i=1; i<argc; ++i) { param=argv[i];
-        if ( param[0]!='-' ) { if (numberOfFiles<MAX_FILES_TO_EVALUATE) { filePaths[numberOfFiles++]=param; } }
-        else if ( PARAM_IS(param,"-h","--help" ) )   { printHelpAndExit = TRUE; }
-        else if ( PARAM_IS(param,"-v","--version") ) { printVersionAndExit = TRUE; }
+        if ( param[0]!='-' ) { if (numberOfFiles<MAX_FILES) { filePaths[numberOfFiles++]=param; } }
+        else if ( isOption(param,"-h","--help" ) )   { printHelpAndExit = TRUE; }
+        else if ( isOption(param,"-v","--version") ) { printVersionAndExit = TRUE; }
 
     }
-
-    if ( printHelpAndExit ) {
-        i=0; while (help[i]!=NULL) { printf("%s\n",help[i++]); }
-        return 0;
-    }
-    if ( printVersionAndExit ) {
-        printf("QEVAL version %s\n", VERSION);
-        printf("Copyright (c) 2020 Martin Rizzo\n");
-        return 0;
-    }
-    /* if a filename was provided then evaluate it! */
+    
+    /* print help or version if requested */
+    if ( printHelpAndExit    ) { i=0; while (help[i]!=NULL) { printf("%s\n",help[i++]); } return 0; }
+    if ( printVersionAndExit ) { printf("QEVAL version %s\n%s\n", VERSION, COPYRIGHT);    return 0; }
+    
+    /* evaluate any file provided in the command line */
     if (numberOfFiles>0) {
         main_InitGlobals();
-        for (i=0; i<numberOfFiles; ++i) { main_EvaluateFile(filePaths[i]); }
-        if (!printErrorMessages()) {
-             main_PrintImportantValues();
+        for (i=0; i<numberOfFiles; ++i) {
+            theFileName   = filePaths[i];
+            theLineNumber = 0;
+            fileBuffer = allocFileBuffer(theFileName);
+            if (fileBuffer) {
+                ptr=fileBuffer; theLineNumber=1;
+                while ( *ptr!=CH_ENDFILE && success ) {
+                    main_EvaluateTextLine(ptr,&ptr);
+                    ++theLineNumber;
+                }
+            }
+            free((void*)fileBuffer);
         }
+        if (!printErrorMessages()) { main_PrintImportantValues(); }
     }
+    
     return 0;
 }
 
