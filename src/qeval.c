@@ -87,30 +87,67 @@ static const Operator OpSafeGuard   = {-1,"",255};
 
 typedef struct Error { ErrorID id; const utf8 *filename, *str; int line; } Error;
 
-typedef enum ValueType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_INTEGER, TYPE_ASTRING, TYPE_CSTRING } ValueType;
-
-typedef struct Value {
-    ValueType type;
-    union {
-        struct { const utf8 *ptr;         } unsolved;
-        struct { int value;               } integer;
-        struct { const utf8 *start, *end; } astring;
-        struct { const utf8 *start, *end; } cstring;
-    } x;
-} Value;
 
 
 
-static const char * ValueTypeToString(ValueType type) {
-    switch (type) {
-        case TYPE_UNSOLVED: return "UNSOLVED"; 
-        case TYPE_EMPTY:    return "EMPTY";
-        case TYPE_ASTRING:  return "ASTRING";
-        case TYPE_CSTRING:  return "CSTRING";
-        case TYPE_INTEGER:  return "INTEGER";
-    }
-    return "Unknown";
+
+
+/*=================================================================================================================*/
+#pragma mark - > VARIANTS AND MATH
+
+typedef enum   VariantType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_ASTRING, TYPE_CSTRING, TYPE_INUMBER, TYPE_FNUMBER } VariantType;
+typedef union  Variant {
+    VariantType type;
+    struct { VariantType type;                          } empty;     /* < empty data          */
+    struct { VariantType type; const utf8 *start;       } unsolved;  /* < unsolved expression */
+    struct { VariantType type; const utf8 *start, *end; } astring;   /* < assembler string    */
+    struct { VariantType type; const utf8 *start, *end; } cstring;   /* < C string            */
+    struct { VariantType type; int   value;             } inumber;   /* < integer number      */
+    struct { VariantType type; float value;             } fnumber;   /* < float point number  */
+} Variant;
+
+static Bool variantToInt(const Variant* variant, int* i) {
+    if (variant->type==TYPE_INUMBER) { (*i)=variant->inumber.value;    return TRUE; }
+    if (variant->type==TYPE_ASTRING) { (*i)=variant->astring.start[0]; return TRUE; }
+    return FALSE;
 }
+
+static Bool variantToFloat(const Variant* variant, float* f) {
+    if (variant->type==TYPE_FNUMBER) { (*f)=variant->fnumber.value;        return TRUE; }
+    if (variant->type==TYPE_INUMBER) { (*f)=(float)variant->inumber.value; return TRUE; }
+    return FALSE;
+}
+
+#define return_INumber(r,   int1, op,   int2) r->type=TYPE_INUMBER; r->inumber.value=   int1 op   int2; return
+#define return_FNumber(r, float1, op, float2) r->type=TYPE_FNUMBER; r->fnumber.value= float1 op float2; return
+
+/**
+ * Calculates a simple mathematical operation between two variants applying the provided operator
+ * @param[out] r          Pointer to the variant where the calculation result will be stored
+ * @param[in]  variant1   The left operand
+ * @param[in]  operator   The operation to apply
+ * @param[in]  variant2   The right operand
+ */
+static void calcOperation(Variant* r, const Variant* variant1, const Operator *operator, const Variant* variant2) {
+    int int1,int2; float float1,float2;
+    assert( operator!=NULL && variant1!=NULL && variant2!=NULL );
+    
+    if ( variantToInt(variant1,&int1) && variantToInt(variant2,&int2) ) { switch (operator->id) {
+        case OP_ADD: return_INumber(r, int1, +,int2); case OP_SUB: return_INumber(r, int1, -,int2);
+        case OP_MUL: return_INumber(r, int1, *,int2); case OP_DIV: return_INumber(r, int1, /,int2);
+        case OP_SHL: return_INumber(r, int1,<<,int2); case OP_SHR: return_INumber(r, int1,>>,int2);
+        case OP_AND: return_INumber(r, int1, &,int2); case OP_OR:  return_INumber(r, int1, |,int2);
+        case OP_XOR: return_INumber(r, int1, ^,int2); case OP_MOD: return_INumber(r, int1, %,int2);
+    } }
+    else if ( variantToFloat(variant1,&float1) && variantToFloat(variant2,&float2) ) { switch (operator->id) {
+        case OP_ADD: return_FNumber(r, float1, +,float2); case OP_SUB: return_FNumber(r, float1, -,float2);
+        case OP_MUL: return_FNumber(r, float1, *,float2); case OP_DIV: return_FNumber(r, float1, /,float2);
+        default: break;
+    } }
+    (*r) = (*variant1);
+    return;
+}
+
 
 /*=================================================================================================================*/
 #pragma mark - > HELPER FUNCTIONS
@@ -156,12 +193,6 @@ static const utf8 * strreplace(utf8 *buffer, const utf8 *message, int charToRepl
     *dest='\0'; return buffer;
 }
 
-static long fgetsize(FILE* file) {
-    long size;
-    assert( file!=NULL );
-    fseek(file,0L,SEEK_END); size=ftell(file); rewind(file);
-    return size;
-}
 
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
@@ -180,12 +211,14 @@ static int         theErrorCount = 0;
 #ifdef NDEBUG
 #   define DLOG_VALUE(value)
 #else
-    static void DLOG_VALUE(const Value value) {
-        switch (value.type) {
-            case TYPE_UNSOLVED: DLOG(("<Unsolved>")); break;
-            case TYPE_INTEGER:  DLOG(("<Integer value=%d>", value.x.integer.value)); break;
-            case TYPE_ASTRING:  DLOG(("<AString value=\"%c%c...\">", value.x.astring.start[0], value.x.astring.start[1] )); break;
-            case TYPE_CSTRING:  DLOG(("<CString value=\"%c%c...\">", value.x.cstring.start[0], value.x.cstring.start[1] )); break;
+    static void DLOG_VARIANT(const Variant variant) {
+        switch (variant.unsolved.type) {
+            case TYPE_EMPTY:    DLOG(("<Empty>")); break;
+            case TYPE_UNSOLVED: DLOG(("<Unsolved value=\"%c%c...\">", variant.unsolved.start[0], variant.unsolved.start[1])); break;
+            case TYPE_INUMBER:  DLOG(("<Integer number=%d>", variant.inumber.value)); break;
+            case TYPE_FNUMBER:  DLOG(("<Float number=%f>", variant.fnumber.value)); break;
+            case TYPE_ASTRING:  DLOG(("<AString value=\"%c%c...\">", variant.astring.start[0], variant.astring.start[1] )); break;
+            case TYPE_CSTRING:  DLOG(("<CString value=\"%c%c...\">", variant.cstring.start[0], variant.cstring.start[1] )); break;
             default:       DLOG(("<Unknown> ERROR!")); break;
         }
     }
@@ -340,9 +373,9 @@ static Bool ReadOperator(const utf8 *ptr, const utf8 **out_end, const Operator *
 
 
 /*=================================================================================================================*/
-#pragma mark - > MATHEMATICAL EXPRESSION CALCULATION
+#pragma mark - > EXPRESION EVALUATOR
 
-static Value theValue;
+static Variant theVariant;
 struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
 struct { int             array[CALC_STACK_SIZE]; int i; } valueStack;
 
@@ -362,7 +395,7 @@ struct { int             array[CALC_STACK_SIZE]; int i; } valueStack;
  * @param[in] arg1      the left value
  * @param[in] arg2      the right value
  */
-static int SolveIntCalculation(const Operator *operator, int arg1, int arg2) {
+static int solveIntegerOperation(const Operator *operator, int arg1, int arg2) {
     switch (operator->id) {
         case OP_ADD: return arg1 +  arg2;    case OP_SUB: return arg1 -  arg2;
         case OP_MUL: return arg1 *  arg2;    case OP_DIV: return arg1 /  arg2;
@@ -379,48 +412,55 @@ static int SolveIntCalculation(const Operator *operator, int arg1, int arg2) {
  * @param[in] arg1      the left value
  * @param[in] arg2      the right value
  */
-static float SolveFloatCalculation(const Operator *operator, float arg1, float arg2) {
-    assert( FALSE ); /* not implemented yet */
-    return arg1;
+/*
+static float solveFloatPointOperations(const Operator *operator, float arg1, float arg2) {
+    switch (operator->id) {
+        case OP_ADD: return arg1 +arg2; case OP_SUB: return arg1 - arg2;
+        default:     return arg1;
+    }
 }
+*/
 
 
-static Value * StartCalculation(const utf8 *start, const utf8 **out_end) {
+static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
     const Operator* op;
     int value; utf8 name[MAX_NAME_LEN]; Bool continueScanning;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
 
-    theValue.type           = TYPE_UNSOLVED;
-    theValue.x.unsolved.ptr = ptr;
+    theVariant.unsolved.type  = TYPE_UNSOLVED;
+    theVariant.unsolved.start = ptr;
 
     skipblankspaces(ptr);
     if ( *ptr==CH_PARAM_SEP || isendofline(*ptr) ) {
-        theValue.type = TYPE_EMPTY;
+        theVariant.empty.type = TYPE_EMPTY;
     }
+    /*-- evaluate C string --------------------*/
     else if ( *ptr==CH_CSTRING ) {
-        theValue.type          = TYPE_CSTRING;
-        theValue.x.cstring.start = ++ptr;
+        theVariant.cstring.type  = TYPE_CSTRING;
+        theVariant.cstring.start = ++ptr;
         do {
             while ( !isendofcode(*ptr) && *ptr!=CH_CSTRING) { ++ptr; }
             continueScanning = ptr[0]==CH_CSTRING && *(ptr-1)==CH_STRING_ESCAPE;
             if  (continueScanning) { ptr+=2; }
         } while (continueScanning);
-        theValue.x.cstring.end = ptr;
+        theVariant.cstring.end = ptr;
         if (*ptr==CH_CSTRING) { ++ptr; }
     }
+    /*-- evaluate ASM string ------------------*/
     else if ( *ptr==CH_ASMSTRING ) {
-        theValue.type          = TYPE_ASTRING;
-        theValue.x.astring.start = ++ptr;
+        theVariant.astring.type  = TYPE_ASTRING;
+        theVariant.astring.start = ++ptr;
         do {
             while ( !isendofcode(*ptr) && *ptr!=CH_ASMSTRING) { ++ptr; }
             continueScanning = ptr[0]==CH_ASMSTRING && ptr[1]==CH_ASMSTRING;
             if  (continueScanning) { ptr+=2; }
         } while (continueScanning);
-        theValue.x.astring.end = ptr;
+        theVariant.astring.end = ptr;
         if (*ptr==CH_ASMSTRING) { ++ptr; }
     }
+    /*-- evaluate expression ------------------*/
     else {
         cINITSTACK(opStack,    &OpSafeGuard, &OpSafeGuard);
         cINITSTACK(valueStack,            0,            0);
@@ -429,37 +469,40 @@ static Value * StartCalculation(const utf8 *start, const utf8 **out_end) {
                 cPUSH(opStack,&OpParenthesis);
             }
             else if (*ptr==')') {
-                while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
+                while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(solveIntegerOperation,opStack,valueStack); }
                 if (cPOP(opStack)==&OpSafeGuard) { error(ERR_UNEXPECTED_PARENTHESIS,0); return NULL; }
             }
             else if ( ReadLiteral(ptr,&ptr,&value) ) {
                 cPUSH(valueStack, value);
             }
             else if ( ReadName(ptr,&ptr,name,sizeof(name)) ) {
+                
                 assert( FALSE );
             }
             else if ( ReadOperator(ptr,&ptr,&op) ) {
-                while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(SolveIntCalculation,opStack,valueStack) }
+                while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(solveIntegerOperation,opStack,valueStack) }
                 cPUSH(opStack,op);
             }
             else {
                 error(ERR_INVALID_EXPRESSION,0);
-                return &theValue;
+                return &theVariant;
             }
             skipblankspaces(ptr);
         }
 
         /* process any pending operator before return */
-        while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(SolveIntCalculation,opStack,valueStack); }
-        if ( valueStack.i!=3 || opStack.i!=2 ) { error(ERR_INVALID_EXPRESSION,0); return &theValue; }
+        while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(solveIntegerOperation,opStack,valueStack); }
+        if ( valueStack.i!=3 || opStack.i!=2 ) { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
 
-        theValue.type          = TYPE_INTEGER;
-        theValue.x.integer.value = cPOP(valueStack);
+        theVariant.inumber.type  = TYPE_INUMBER;
+        theVariant.inumber.value = cPOP(valueStack);
     }
 
     while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
     (*out_end) = ptr;
-    return &theValue;
+    
+    DLOG_VARIANT(theVariant);
+    return &theVariant;
 }
 
 
@@ -480,47 +523,52 @@ static Value * StartCalculation(const utf8 *start, const utf8 **out_end) {
 
 */
 
-Value * theImportantList;
-Value * theUnsolvedList;
+Variant * theImportantList;
+Variant * theUnsolvedList;
 
 
+/*
 static Bool qeval_AddConstant(const utf8 *name, Value *value) {
     return TRUE;
 }
+*/
+
+/*
 static Bool qeval_AddVariable(const utf8 *name, Value *value) {
-    assert( FALSE ); /* not implemented yet */
+    assert( FALSE );
     return TRUE;
 }
+*/
 
+/*
 static Bool qeval_AddImportantValue(Value *value, int user1, int user2) {
-    /*
     value->user1 = user1;
     value->user2 = user2;
     value->prev = last;
     last->next  = value;
-    */
     return TRUE;
 }
+ */
 
-static Bool qeval_ToInt16(const Value *value, int *out_integer) {
-    switch (value->type) {
-        case TYPE_INTEGER:
-            (*out_integer) = value->x.integer.value;
+static Bool qeval_ToInt16(const Variant* variant, int* out_integer) {
+    switch (variant->unsolved.type) {
+        case TYPE_INUMBER:
+            (*out_integer) = variant->inumber.value;
             return TRUE;
         default:
             return FALSE;
     }
 }
 
-static Bool qeval_ToString(const Value *value, utf8 *buffer, int bufferSize) {
+static Bool qeval_ToString(const Variant *variant, utf8 *buffer, int bufferSize) {
     utf8 *dest, *destend; const utf8 *ptr, *ptrend;
     int ch, digit;
 
-    switch (value->type)
+    switch (variant->unsolved.type)
     {
         case TYPE_ASTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
-            ptr=value->x.astring.start; ptrend=value->x.astring.end;
+            ptr=variant->astring.start; ptrend=variant->astring.end;
             do {
                 while (ptr<ptrend && *ptr!=CH_ASMSTRING) { safecpy(dest,destend,ptr); }
                 if  (ptr<ptrend) { safecpy_char(dest,destend,CH_ASMSTRING); ptr+=2; }
@@ -530,7 +578,7 @@ static Bool qeval_ToString(const Value *value, utf8 *buffer, int bufferSize) {
 
         case TYPE_CSTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
-            ptr=value->x.cstring.start; while(ptr<value->x.cstring.end) {
+            ptr=variant->cstring.start; while(ptr<variant->cstring.end) {
                 if (ptr[0]!=CH_STRING_ESCAPE) { safecpy(dest,destend,ptr); }
                 else {
                     switch (ptr[1]) {
@@ -588,18 +636,18 @@ static void main_InitGlobals() {
     theUnsolvedList  = NULL;
 }
 
-static void main_PrintValue(const Value *value) {
+static void main_PrintVariant(const Variant* variant) {
     utf8 str[1024]; int integer;
-    if      (qeval_ToInt16(value,&integer))         { printf("%d ",integer); }
-    else if (qeval_ToString(value,str,sizeof(str))) { printf("%s",str);      }
-    else                                            { printf("??? ");        }
+    if      (qeval_ToInt16(variant,&integer))         { printf("%d ",integer); }
+    else if (qeval_ToString(variant,str,sizeof(str))) { printf("%s",str);      }
+    else                                              { printf("??? ");        }
 }
 
 static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
     Bool printByDefault = FALSE;
     Bool continueScanning;
-    Value *value;
+    Variant* variant;
     const utf8 *ptr = start;
     utf8 name[128], *dest, *destend;
 
@@ -614,23 +662,23 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
-        value = StartCalculation(ptr+1,&ptr);
-        /* DLOG_VALUE(*value); */
+        variant = startEvaluation(ptr+1,&ptr);
+        /* DLOG_VARIANT(*variant); */
         /* qeval_AddConstantValue(name,value); */
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         do {
-            value = StartCalculation(ptr,&ptr);
-            main_PrintValue(value);
+            variant = startEvaluation(ptr,&ptr);
+            main_PrintVariant(variant);
             /* qeval_AddImportantValue(value,linenum,0); */
             continueScanning = (*ptr==CH_PARAM_SEP);
             if  (continueScanning) { ++ptr; }
         } while (continueScanning); 
-        theValue.type = TYPE_ASTRING;
-        theValue.x.astring.start = "\n";
-        theValue.x.astring.end   = theValue.x.astring.start + 1;
-        main_PrintValue(&theValue);
+        theVariant.astring.type  = TYPE_ASTRING;
+        theVariant.astring.start = "\n";
+        theVariant.astring.end   = theVariant.astring.start + 1;
+        main_PrintVariant(&theVariant);
     }
 
     /* place pointer in the first character of the next line and return it */
@@ -662,25 +710,6 @@ static utf8 * allocFileBuffer(const utf8* filePath) {
     return fileBuffer;
 }
 
-/*
-static Bool main_EvaluateFile(const utf8 *filename) {
-    const utf8 *ptr, *fileBuffer;
-
-    theFileName   = filename;
-    theLineNumber = 0;
-
-    fileBuffer = allocFileBuffer(filename);
-    if (fileBuffer) {
-        ptr=fileBuffer; theLineNumber=1;
-        while ( *ptr!=CH_ENDFILE && theErrorCount==0 ) {
-            main_EvaluateTextLine(ptr,&ptr);
-            ++theLineNumber;
-        }
-    }
-    free((void*)fileBuffer);
-    return success ? TRUE : FALSE;
-}
-*/
 
 static void main_PrintImportantValues() {
     /*
