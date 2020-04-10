@@ -44,6 +44,7 @@
 #define MAX_ERRSTR_LEN  (63)          /* < ... */
 #define MAX_ERRMSG_LEN  (63)          /* < ... */
 #define CALC_STACK_SIZE (256)         /* < the calculator's stack size in number of elements */
+#define MAX_PRECEDENCE  63            /* < maximum valid operator predecence */
 
 
 
@@ -64,13 +65,13 @@ typedef enum StdChars_ {
 typedef enum ErrorID_ {
     ERR_NO_ERROR=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_LARGE, ERR_CANNOT_READ_FILE, ERR_NOT_ENOUGH_MEMORY,
     ERR_INT8_OUT_OF_RANGE,  ERR_INT16_OUT_OF_RANGE, ERR_BITNUM_OUT_OF_RANGE, ERR_INVALID_EXPRESSION,
-    ERR_INVALID_IMODE, ERR_UNEXPECTED_PARENTHESIS, ERR_INVALID_RST_ADDRESS, ERR_DISP_MUST_BE_ZERO,
-    ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
+    ERR_INVALID_IMODE, ERR_UNEXPECTED_PTHESIS, ERR_TOO_MANY_OPEN_PTHESES, ERR_INVALID_RST_ADDRESS,
+    ERR_DISP_MUST_BE_ZERO, ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
 } ErrorID;
 
 /* supported operators */
 typedef enum OperatorID {
-    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR, OP_AND, OP_OR, OP_XOR
+    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR, OP_AND, OP_OR, OP_XOR, OP_INVALID
 } OperatorID;
 
 typedef struct Operator { OperatorID id; const utf8* str; int preced; } Operator;
@@ -81,8 +82,9 @@ static const Operator theOperators[13] = {
     {OP_ADD ,"+ ",  6}, {OP_SUB  ,"- ", 6}, {OP_MUL,"* ",5}, {OP_DIV,"/ ",5}, {OP_MOD,"% ",5},
     {0,NULL,0}
 };
-static const Operator OpParenthesis = {-1,"",255};
-static const Operator OpSafeGuard   = {-1,"",255};
+
+static const Operator OpParenthesis = {OP_INVALID,"",(MAX_PRECEDENCE+1)};
+static const Operator OpSafeGuard   = {OP_INVALID,"",(MAX_PRECEDENCE+1)};
 
 
 typedef struct Error { ErrorID id; const utf8 *filename, *str; int line; } Error;
@@ -90,63 +92,6 @@ typedef struct Error { ErrorID id; const utf8 *filename, *str; int line; } Error
 
 
 
-
-
-/*=================================================================================================================*/
-#pragma mark - > VARIANTS AND MATH
-
-typedef enum   VariantType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_ASTRING, TYPE_CSTRING, TYPE_INUMBER, TYPE_FNUMBER } VariantType;
-typedef union  Variant {
-    VariantType type;
-    struct { VariantType type;                          } empty;     /* < empty data          */
-    struct { VariantType type; const utf8 *start;       } unsolved;  /* < unsolved expression */
-    struct { VariantType type; const utf8 *start, *end; } astring;   /* < assembler string    */
-    struct { VariantType type; const utf8 *start, *end; } cstring;   /* < C string            */
-    struct { VariantType type; int   value;             } inumber;   /* < integer number      */
-    struct { VariantType type; float value;             } fnumber;   /* < float point number  */
-} Variant;
-
-static Bool variantToInt(const Variant* variant, int* i) {
-    if (variant->type==TYPE_INUMBER) { (*i)=variant->inumber.value;    return TRUE; }
-    if (variant->type==TYPE_ASTRING) { (*i)=variant->astring.start[0]; return TRUE; }
-    return FALSE;
-}
-
-static Bool variantToFloat(const Variant* variant, float* f) {
-    if (variant->type==TYPE_FNUMBER) { (*f)=variant->fnumber.value;        return TRUE; }
-    if (variant->type==TYPE_INUMBER) { (*f)=(float)variant->inumber.value; return TRUE; }
-    return FALSE;
-}
-
-#define return_INumber(r,   int1, op,   int2) r->type=TYPE_INUMBER; r->inumber.value=   int1 op   int2; return
-#define return_FNumber(r, float1, op, float2) r->type=TYPE_FNUMBER; r->fnumber.value= float1 op float2; return
-
-/**
- * Calculates a simple mathematical operation between two variants applying the provided operator
- * @param[out] r          Pointer to the variant where the calculation result will be stored
- * @param[in]  variant1   The left operand
- * @param[in]  operator   The operation to apply
- * @param[in]  variant2   The right operand
- */
-static void calcOperation(Variant* r, const Variant* variant1, const Operator *operator, const Variant* variant2) {
-    int int1,int2; float float1,float2;
-    assert( operator!=NULL && variant1!=NULL && variant2!=NULL );
-    
-    if ( variantToInt(variant1,&int1) && variantToInt(variant2,&int2) ) { switch (operator->id) {
-        case OP_ADD: return_INumber(r, int1, +,int2); case OP_SUB: return_INumber(r, int1, -,int2);
-        case OP_MUL: return_INumber(r, int1, *,int2); case OP_DIV: return_INumber(r, int1, /,int2);
-        case OP_SHL: return_INumber(r, int1,<<,int2); case OP_SHR: return_INumber(r, int1,>>,int2);
-        case OP_AND: return_INumber(r, int1, &,int2); case OP_OR:  return_INumber(r, int1, |,int2);
-        case OP_XOR: return_INumber(r, int1, ^,int2); case OP_MOD: return_INumber(r, int1, %,int2);
-    } }
-    else if ( variantToFloat(variant1,&float1) && variantToFloat(variant2,&float2) ) { switch (operator->id) {
-        case OP_ADD: return_FNumber(r, float1, +,float2); case OP_SUB: return_FNumber(r, float1, -,float2);
-        case OP_MUL: return_FNumber(r, float1, *,float2); case OP_DIV: return_FNumber(r, float1, /,float2);
-        default: break;
-    } }
-    (*r) = (*variant1);
-    return;
-}
 
 
 /*=================================================================================================================*/
@@ -208,22 +153,6 @@ static int         theErrorCount = 0;
 #    define DLOG(x) printf x; printf("\n")
 #endif
 
-#ifdef NDEBUG
-#   define DLOG_VALUE(value)
-#else
-    static void DLOG_VARIANT(const Variant variant) {
-        switch (variant.unsolved.type) {
-            case TYPE_EMPTY:    DLOG(("<Empty>")); break;
-            case TYPE_UNSOLVED: DLOG(("<Unsolved value=\"%c%c...\">", variant.unsolved.start[0], variant.unsolved.start[1])); break;
-            case TYPE_INUMBER:  DLOG(("<Integer number=%d>", variant.inumber.value)); break;
-            case TYPE_FNUMBER:  DLOG(("<Float number=%f>", variant.fnumber.value)); break;
-            case TYPE_ASTRING:  DLOG(("<AString value=\"%c%c...\">", variant.astring.start[0], variant.astring.start[1] )); break;
-            case TYPE_CSTRING:  DLOG(("<CString value=\"%c%c...\">", variant.cstring.start[0], variant.cstring.start[1] )); break;
-            default:       DLOG(("<Unknown> ERROR!")); break;
-        }
-    }
-#endif
-
 /**
  * Global var that indicates whether the program is being successfully executed.
  * It is TRUE while no error is reported.
@@ -252,21 +181,22 @@ static Bool printErrorMessages(void) {
 
     while (--count>=0) {
         switch (error->id) {
-            case ERR_NO_ERROR:           message = "SUCCESS"; break;
-            case ERR_FILE_NOT_FOUND:     message = "file not found";    break;
-            case ERR_FILE_TOO_LARGE:     message = "the file '$' is too large"; break;
-            case ERR_NOT_ENOUGH_MEMORY:  message = "not enough memory"; break;
-            case ERR_INT8_OUT_OF_RANGE:  message = "the 8-bit value is out of range"; break;
-            case ERR_INT16_OUT_OF_RANGE: message = "the 16-bit value is out of range"; break;
-            case ERR_BITNUM_OUT_OF_RANGE:message = "the bit number is out of range (valid range is: 0-7)"; break;
-            case ERR_INVALID_EXPRESSION: message = "invalid expression"; break;
-            case ERR_INVALID_IMODE:      message = "invalid interruption mode"; break;
-            case ERR_UNEXPECTED_PARENTHESIS: message = "unexpected ')' (closing parenthesis)"; break;
-            case ERR_INVALID_RST_ADDRESS:message = "invalid RST address"; break;
-            case ERR_DISP_MUST_BE_ZERO:  message = "no displacement can be added to the index register"; break;
-            case ERR_DISP_OUT_OF_RANGE:  message = "the displacement is out of range"; break;
-            case ERR_UNKNOWN_PARAM:      message = "unknown parameter"; break;
-            default:                     message = "unknown error";     break;
+            case ERR_NO_ERROR:             message = "SUCCESS"; break;
+            case ERR_FILE_NOT_FOUND:       message = "file not found";    break;
+            case ERR_FILE_TOO_LARGE:       message = "the file '$' is too large"; break;
+            case ERR_NOT_ENOUGH_MEMORY:    message = "not enough memory"; break;
+            case ERR_INT8_OUT_OF_RANGE:    message = "the 8-bit value is out of range"; break;
+            case ERR_INT16_OUT_OF_RANGE:   message = "the 16-bit value is out of range"; break;
+            case ERR_BITNUM_OUT_OF_RANGE:  message = "the bit number is out of range (valid range is: 0-7)"; break;
+            case ERR_INVALID_EXPRESSION:   message = "invalid expression"; break;
+            case ERR_INVALID_IMODE:        message = "invalid interruption mode"; break;
+            case ERR_UNEXPECTED_PTHESIS:   message = "unexpected ')' (closing parenthesis)"; break;
+            case ERR_TOO_MANY_OPEN_PTHESES:message = "too many open parentheses"; break;
+            case ERR_INVALID_RST_ADDRESS:  message = "invalid RST address"; break;
+            case ERR_DISP_MUST_BE_ZERO:    message = "no displacement can be added to the index register"; break;
+            case ERR_DISP_OUT_OF_RANGE:    message = "the displacement is out of range"; break;
+            case ERR_UNKNOWN_PARAM:        message = "unknown parameter"; break;
+            default:                       message = "unknown error";     break;
         }
         message=strreplace(buffer,message,'$',error->str);
         if (error->line) { printf("%s:%d: %s %s\n", error->filename, error->line, "error:", message); }
@@ -276,20 +206,158 @@ static Bool printErrorMessages(void) {
     return (theErrorCount>0);
 }
 
+
+/*=================================================================================================================*/
+#pragma mark - > VARIANTS AND MATH
+
+typedef enum   VariantType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_ASTRING, TYPE_CSTRING, TYPE_INUMBER, TYPE_FNUMBER } VariantType;
+typedef union  Variant {
+    VariantType type;
+    struct { VariantType type;                          } empty;     /* < empty data          */
+    struct { VariantType type; const utf8 *start;       } unsolved;  /* < unsolved expression */
+    struct { VariantType type; const utf8 *start, *end; } astring;   /* < assembler string    */
+    struct { VariantType type; const utf8 *start, *end; } cstring;   /* < C string            */
+    struct { VariantType type; int   value;             } inumber;   /* < integer number      */
+    struct { VariantType type; float value;             } fnumber;   /* < float point number  */
+} Variant;
+
+static const Variant EmptyVariant = { TYPE_EMPTY };
+
+static Bool variantToInt(const Variant* variant, int* i) {
+    if (variant->type==TYPE_INUMBER) { (*i)=variant->inumber.value;    return TRUE; }
+    if (variant->type==TYPE_ASTRING) { (*i)=variant->astring.start[0]; return TRUE; }
+    return FALSE;
+}
+
+static Bool variantToFloat(const Variant* variant, float* f) {
+    if (variant->type==TYPE_FNUMBER) { (*f)=variant->fnumber.value;        return TRUE; }
+    if (variant->type==TYPE_INUMBER) { (*f)=(float)variant->inumber.value; return TRUE; }
+    return FALSE;
+}
+
+static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize) {
+    utf8 *dest, *destend; const utf8 *ptr, *ptrend; int ch, digit;
+    assert( variant!=NULL && buffer!=NULL && bufferSize>0 );
+    switch (variant->type) {
+            
+        case TYPE_ASTRING:
+            safecpy_begin(dest,destend,buffer,bufferSize);
+            ptr=variant->astring.start; ptrend=variant->astring.end;
+            do {
+                while (ptr<ptrend && *ptr!=CH_ASMSTRING) { safecpy(dest,destend,ptr); }
+                if  (ptr<ptrend) { safecpy_char(dest,destend,CH_ASMSTRING); ptr+=2; }
+            } while (ptr<ptrend);
+            safecpy_end(dest,destend);
+            return TRUE;
+
+        case TYPE_CSTRING:
+            safecpy_begin(dest,destend,buffer,bufferSize);
+            ptr=variant->cstring.start; while(ptr<variant->cstring.end) {
+                if (ptr[0]!=CH_STRING_ESCAPE) { safecpy(dest,destend,ptr); }
+                else {
+                    switch (ptr[1]) {
+                        case 'a' : safecpy_char(dest,destend,0x07); ptr+=2; break; /* audible bell */
+                        case 'b' : safecpy_char(dest,destend,0x08); ptr+=2; break; /* backspce */
+                        case 'e' : safecpy_char(dest,destend,0x1B); ptr+=2; break; /* escape character */
+                        case 'f' : safecpy_char(dest,destend,0x0C); ptr+=2; break; /* form feed - new page */
+                        case 'n' : safecpy_char(dest,destend,0x0A); ptr+=2; break; /* line feed - new line */
+                        case 'r' : safecpy_char(dest,destend,0x0D); ptr+=2; break; /* carriage return */
+                        case 't' : safecpy_char(dest,destend,0x09); ptr+=2; break; /* horizontal tab */
+                        case 'v' : safecpy_char(dest,destend,0x0B); ptr+=2; break; /* vertical tab */
+                        case '\\': safecpy_char(dest,destend,0x5C); ptr+=2; break; /* backslash */
+                        case '\'': safecpy_char(dest,destend,0x27); ptr+=2; break; /* single quote */
+                        case '"' : safecpy_char(dest,destend,0x22); ptr+=2; break; /* double quote */
+                        case 'x' : /* a hexadecimal number */
+                            if ( (digit=hexvalue(ptr[2]))>=0 ) { ch=digit; ptr+=3;
+                                if ( (digit=hexvalue(*ptr))>=0 ) { ch=digit+(ch*16); ++ptr; }
+                                safecpy_char(dest,destend,ch);
+                            }
+                            break;
+                        default: /* a octal number */
+                            if ( (digit=octvalue(ptr[1]))>=0 ) { ch=digit; ptr+=2;
+                                if ( (digit=octvalue(*ptr))>=0 ) { ch=digit+(ch*8); ++ptr;
+                                    if ( (digit=octvalue(*ptr))>=0 ) { ch=digit+(ch*8); ++ptr; }
+                                }
+                                safecpy_char(dest,destend,ch);
+                            } else {
+                                /* a unknown escape sequence */
+                                safecpy_two(dest,destend,ptr);
+                            }
+                            break;
+                    }
+                }
+            }
+            safecpy_end(dest,destend);
+            return TRUE;
+
+        default:
+            return FALSE;
+    }
+}
+
+static void printVariant(const Variant* variant) {
+    utf8 str[1024];
+    switch (variant->type) {
+        case TYPE_EMPTY:    printf("<empty>"); break;
+        case TYPE_UNSOLVED: printf("<??>"); break;
+        case TYPE_INUMBER:  printf("%d",variant->inumber.value); break;
+        case TYPE_FNUMBER:  printf("%f",variant->fnumber.value); break;
+        case TYPE_ASTRING:
+        case TYPE_CSTRING:
+            variantToString(variant,str,sizeof(str));
+            printf("%s",str);
+            break;
+    }
+}
+
+static void printSeparator() { printf(" "); }
+
+#define return_INumber(r,   int1, op,   int2) r->type=TYPE_INUMBER; r->inumber.value=   int1 op   int2; return
+#define return_FNumber(r, float1, op, float2) r->type=TYPE_FNUMBER; r->fnumber.value= float1 op float2; return
+
+/**
+ * Calculates a simple mathematical operation between two variants applying the provided operator
+ * @param[out] r          Pointer to the variant where the calculation result will be stored
+ * @param[in]  variant1   The left operand
+ * @param[in]  operator   The operation to apply
+ * @param[in]  variant2   The right operand
+ */
+static void calcOperation(Variant* r, const Variant* variant1, const Operator *operator, const Variant* variant2) {
+    int int1,int2; float float1,float2;
+    assert( operator!=NULL && variant1!=NULL && variant2!=NULL );
+    
+    if ( variantToInt(variant1,&int1) && variantToInt(variant2,&int2) ) { switch (operator->id) {
+        case OP_ADD: return_INumber(r, int1, +,int2); case OP_SUB: return_INumber(r, int1, -,int2);
+        case OP_MUL: return_INumber(r, int1, *,int2); case OP_DIV: return_INumber(r, int1, /,int2);
+        case OP_SHL: return_INumber(r, int1,<<,int2); case OP_SHR: return_INumber(r, int1,>>,int2);
+        case OP_AND: return_INumber(r, int1, &,int2); case OP_OR:  return_INumber(r, int1, |,int2);
+        case OP_XOR: return_INumber(r, int1, ^,int2); case OP_MOD: return_INumber(r, int1, %,int2);
+        default: assert(FALSE); break;
+    } }
+    else if ( variantToFloat(variant1,&float1) && variantToFloat(variant2,&float2) ) { switch (operator->id) {
+        case OP_ADD: return_FNumber(r, float1, +,float2); case OP_SUB: return_FNumber(r, float1, -,float2);
+        case OP_MUL: return_FNumber(r, float1, *,float2); case OP_DIV: return_FNumber(r, float1, /,float2);
+        default: assert(FALSE); break;
+    } }
+    (*r) = (*variant1);
+    return;
+}
+
+
 /*=================================================================================================================*/
 #pragma mark - > READING ELEMENTS FROM THE TEXT buffer
 
 /**
  * Try to read the value of a integer literal
- * @param[in]   ptr          pointer to the begin of the string with the value to read
- * @param[out]  out_end      (output) returns a pointer to the end of the read literal
- * @param[out]  out_value    (output) returns the value of the read literal
- * @return
- *    FALSE = no value can be read (may be the string is an operator or something else?)
+ * @param[out]  out_v       (output) Pointer to the variant where the read value will be stored
+ * @param[in]   ptr         Pointer to the begin of the string containing the value to read
+ * @param[out]  out_endptr  (optional output) Ref to the pointer where the end of reading will be stored, can be NULL
+ * @returns
+ *    FALSE when no value can be read because the string format does not match with an integer number
  */
-static Bool ReadLiteral(const utf8 *ptr, const utf8 **out_end, int *out_value) {
+static Bool readINumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr) {
     const utf8 *last, *type; int base, value, digit;
-    assert( out_value!=NULL && out_end!=NULL && ptr!=NULL && *ptr!=CH_PARAM_SEP && *ptr!='\0' );
+    assert( out_v!=NULL && (ptr!=NULL && *ptr!=CH_PARAM_SEP && *ptr!='\0') );
     
     if ( !isliteral(*ptr) ) { return FALSE; }
     base = 0;
@@ -297,7 +365,7 @@ static Bool ReadLiteral(const utf8 *ptr, const utf8 **out_end, int *out_value) {
     /* try to recognize the prefix that define the number representation (base) */
     switch ( ptr[0] ) {
         /* differentiate the current address "$" from the hex prefix "$" */
-        case CH_HEXPREFIX_ADDR: if (ishex(ptr[1])) { base=16; ++ptr; } 
+        case CH_HEXPREFIX_ADDR: if (ishex(ptr[1])) { base=16; ++ptr; }
                                 /* else               { (*out_value)=(theCurrAddress&0xFFFF); (*out_end)=ptr+1; return TRUE; } */
                                 break;
         case CH_HEXPREFIX:      if (ishex(ptr[1])) { base=16; ++ptr; } break; /* < hex type defined with "$" */
@@ -324,18 +392,58 @@ static Bool ReadLiteral(const utf8 *ptr, const utf8 **out_end, int *out_value) {
     value=0; while ( ptr<=last )
     { digit=hexvalue(*ptr++); if (0<=digit && digit<base) { value*=base; value+=digit; } }
     while ( isliteral(*ptr) ) { ++ptr; }
+    
     /* everything ok!, return end pointer & value */
-    (*out_end)=ptr; (*out_value)=value; return TRUE;
+    if (out_endptr) { (*out_endptr)=ptr; }
+    out_v->inumber.type  = TYPE_INUMBER;
+    out_v->inumber.value = value;
+    return TRUE;
+}
+
+/**
+ * Try to read the value of a float point literal
+ * @param[out]  out_v       (output) Pointer to the variant where the read value will be stored
+ * @param[in]   ptr         Pointer to the begin of the string containing the value to read
+ * @param[out]  out_endptr  (optional output) Ref to the pointer where the end of reading will be stored, can be NULL
+ * @returns
+ *    FALSE when no value can be read because the string format does not match with a float point number
+ */
+static Bool readFNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr) {
+    return FALSE;
+}
+
+/**
+ * Try to read a operator
+ * @param[out] out_op    (output) Ref to the pointer where returns a pointer to a structure with info about the operator that was read in
+ * @param[in]  ptr       pointer to the begin of the string containing the operator to read
+ * @param[out] out_endptr   (optional output) Ref to the pointer where the end of reading will be stored, can be NULL
+ * @returns
+ *    FALSE when no operator can be read because the string format does not match with any known operator
+ */
+static Bool readOperator(const Operator** out_op, const utf8* ptr, const utf8** out_endptr) {
+    const Operator* op; int firstchar;
+    assert( out_op!=NULL && ptr!=NULL );
+    
+    firstchar = ptr[0];
+    if ( firstchar==CH_PARAM_SEP ) { return FALSE; }
+    for ( op=theOperators ; op->str!=NULL ; ++op ) {
+        if ( op->str[0]==firstchar ) {
+            if ( op->str[1]==' '    ) { *out_op=op; if (out_endptr) { (*out_endptr)=ptr+1; } return TRUE; }
+            if ( op->str[1]==ptr[1] ) { *out_op=op; if (out_endptr) { (*out_endptr)=ptr+2; } return TRUE; }
+        }
+    }
+    /* the operator wasn't correctly identified */
+    return FALSE;
 }
 
 /**
  * Try to read any name (vars, labels, etc) from the provided string
- * @param[in]  ptr        pointer to the string to read
- * @param[out] out_end    (output) returns a pointer to the next char to read immediately after the label
  * @param[in]  buffer     the buffer that will be filled in with the label name
  * @param[in]  bufferSize the buffer size in bytes
+ * @param[in]  ptr        pointer to the string to read
+ * @param[out] out_end    (output) returns a pointer to the next char to read immediately after the label
  */
-static Bool ReadName(const utf8 *ptr, const utf8 **out_end, utf8 *buffer, int bufferSize) {
+static Bool readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf8 **out_end) {
     utf8 *dest, *destend;
     assert( ptr!=NULL && out_end!=NULL && buffer!=NULL && bufferSize>0 );
     
@@ -349,35 +457,13 @@ static Bool ReadName(const utf8 *ptr, const utf8 **out_end, utf8 *buffer, int bu
     (*out_end)=ptr; return TRUE;
 }
 
-/**
- * Try to read a operator from the provided string
- * @param[in]  ptr       pointer to the string to read
- * @param[out] out_end   (output) returns a pointer to next char to read immediately after the operator
- * @param[out] out_op    (output) returns a pointer to a structure with info about the operator that was read in
- */
-static Bool ReadOperator(const utf8 *ptr, const utf8 **out_end, const Operator **out_op) {
-    const Operator* op; int firstchar;
-    assert( out_op!=NULL && out_end!=NULL && ptr!=NULL );
-    
-    firstchar = ptr[0];
-    if ( firstchar==CH_PARAM_SEP ) { return FALSE; }
-    for ( op=theOperators ; op->str!=NULL ; ++op ) {
-        if ( op->str[0]==firstchar ) {
-            if ( op->str[1]==' '    ) { (*out_op)=op; (*out_end)=ptr+1; return TRUE; }
-            if ( op->str[1]==ptr[1] ) { (*out_op)=op; (*out_end)=ptr+2; return TRUE; }
-        }
-    }
-    /* the operator wasn't correctly identified */
-    return FALSE;
-}
-
 
 /*=================================================================================================================*/
 #pragma mark - > EXPRESION EVALUATOR
 
 static Variant theVariant;
 struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
-struct { int             array[CALC_STACK_SIZE]; int i; } valueStack;
+struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 
 
 /** Macros to manage calculator's stacks */
@@ -386,46 +472,16 @@ struct { int             array[CALC_STACK_SIZE]; int i; } valueStack;
 #define cPOP(stack)                     (stack.array[--stack.i])
 #define cPEEK(stack)                    (stack.array[stack.i-1])
 #define cEXECUTE(f, oStack, vStack) \
-    vStack.array[vStack.i-2] = f(oStack.array[--oStack.i], vStack.array[vStack.i-1], vStack.array[vStack.i-2]); \
+    f(&vStack.array[vStack.i-2], &vStack.array[vStack.i-1], oStack.array[--oStack.i], &vStack.array[vStack.i-2]); \
     --vStack.i;
 
-/**
- * Solve a simple mathematical operation between two integer values applying the provided operator
- * @param[in] operator  the operation to apply
- * @param[in] arg1      the left value
- * @param[in] arg2      the right value
- */
-static int solveIntegerOperation(const Operator *operator, int arg1, int arg2) {
-    switch (operator->id) {
-        case OP_ADD: return arg1 +  arg2;    case OP_SUB: return arg1 -  arg2;
-        case OP_MUL: return arg1 *  arg2;    case OP_DIV: return arg1 /  arg2;
-        case OP_MOD: return arg1 %  arg2;    case OP_SHL: return arg1 << arg2;
-        case OP_SHR: return arg1 >> arg2;    case OP_AND: return arg1 &  arg2;
-        case OP_OR:  return arg1 |  arg2;    case OP_XOR: return arg1 ^  arg2;
-        default:     return arg1;
-    }
-}
-
-/**
- * Solve a simple mathematical operation between two floating point values using the provided operator
- * @param[in] operator  the operation to apply
- * @param[in] arg1      the left value
- * @param[in] arg2      the right value
- */
-/*
-static float solveFloatPointOperations(const Operator *operator, float arg1, float arg2) {
-    switch (operator->id) {
-        case OP_ADD: return arg1 +arg2; case OP_SUB: return arg1 - arg2;
-        default:     return arg1;
-    }
-}
-*/
-
+#define cWHILE_PRECEDENCE(cond, f, oStack, vStack) \
+    while (cPEEK(oStack)->preced cond) { cEXECUTE(f,oStack,vStack); }
 
 static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
-    const Operator* op;
-    int value; utf8 name[MAX_NAME_LEN]; Bool continueScanning;
+    const Operator* op; Variant variant;
+    utf8 name[MAX_NAME_LEN]; Bool continueScanning;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
 
@@ -462,46 +518,43 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
     }
     /*-- evaluate expression ------------------*/
     else {
-        cINITSTACK(opStack,    &OpSafeGuard, &OpSafeGuard);
-        cINITSTACK(valueStack,            0,            0);
+        cINITSTACK(opStack,   &OpSafeGuard, &OpSafeGuard);
+        cINITSTACK(vStack,    EmptyVariant, EmptyVariant);
         while (*ptr!=CH_PARAM_SEP && !isendofcode(*ptr)) {
             if (*ptr=='(') {
-                cPUSH(opStack,&OpParenthesis);
+                cPUSH(opStack,&OpParenthesis); ++ptr;
             }
             else if (*ptr==')') {
-                while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(solveIntegerOperation,opStack,valueStack); }
-                if (cPOP(opStack)==&OpSafeGuard) { error(ERR_UNEXPECTED_PARENTHESIS,0); return NULL; }
+                cWHILE_PRECEDENCE(<=MAX_PRECEDENCE, calcOperation,opStack,vStack);
+                /* while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(calcOperation,opStack,vStack); } */
+                if (cPOP(opStack)!=&OpParenthesis) { error(ERR_UNEXPECTED_PTHESIS,0); return NULL; }
+                ++ptr;
             }
-            else if ( ReadLiteral(ptr,&ptr,&value) ) {
-                cPUSH(valueStack, value);
+            else if ( readINumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
+            else if ( readFNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
+            else if ( readOperator(&op,ptr,&ptr) ) {
+                cWHILE_PRECEDENCE(<=op->preced, calcOperation,opStack,vStack);
+                cPUSH(opStack, op);
             }
-            else if ( ReadName(ptr,&ptr,name,sizeof(name)) ) {
+            else if ( readName(name,sizeof(name),ptr,&ptr) ) {
                 
                 assert( FALSE );
             }
-            else if ( ReadOperator(ptr,&ptr,&op) ) {
-                while (cPEEK(opStack)->preced<=op->preced) { cEXECUTE(solveIntegerOperation,opStack,valueStack) }
-                cPUSH(opStack,op);
-            }
-            else {
-                error(ERR_INVALID_EXPRESSION,0);
-                return &theVariant;
-            }
+            else { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
             skipblankspaces(ptr);
         }
 
         /* process any pending operator before return */
-        while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(solveIntegerOperation,opStack,valueStack); }
-        if ( valueStack.i!=3 || opStack.i!=2 ) { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
-
-        theVariant.inumber.type  = TYPE_INUMBER;
-        theVariant.inumber.value = cPOP(valueStack);
+        cWHILE_PRECEDENCE(<=MAX_PRECEDENCE, calcOperation,opStack,vStack);
+        /* while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(calcOperation,opStack,vStack); } */
+        if ( cPEEK(opStack)==&OpParenthesis) { error(ERR_TOO_MANY_OPEN_PTHESES,0); return NULL; }
+        if ( vStack.i!=3 || opStack.i!=2 ) { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
+        theVariant = cPOP(vStack);
     }
 
     while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
     (*out_end) = ptr;
     
-    DLOG_VARIANT(theVariant);
     return &theVariant;
 }
 
@@ -550,76 +603,6 @@ static Bool qeval_AddImportantValue(Value *value, int user1, int user2) {
 }
  */
 
-static Bool qeval_ToInt16(const Variant* variant, int* out_integer) {
-    switch (variant->unsolved.type) {
-        case TYPE_INUMBER:
-            (*out_integer) = variant->inumber.value;
-            return TRUE;
-        default:
-            return FALSE;
-    }
-}
-
-static Bool qeval_ToString(const Variant *variant, utf8 *buffer, int bufferSize) {
-    utf8 *dest, *destend; const utf8 *ptr, *ptrend;
-    int ch, digit;
-
-    switch (variant->unsolved.type)
-    {
-        case TYPE_ASTRING:
-            safecpy_begin(dest,destend,buffer,bufferSize);
-            ptr=variant->astring.start; ptrend=variant->astring.end;
-            do {
-                while (ptr<ptrend && *ptr!=CH_ASMSTRING) { safecpy(dest,destend,ptr); }
-                if  (ptr<ptrend) { safecpy_char(dest,destend,CH_ASMSTRING); ptr+=2; }
-            } while (ptr<ptrend);
-            safecpy_end(dest,destend);
-            return TRUE;
-
-        case TYPE_CSTRING:
-            safecpy_begin(dest,destend,buffer,bufferSize);
-            ptr=variant->cstring.start; while(ptr<variant->cstring.end) {
-                if (ptr[0]!=CH_STRING_ESCAPE) { safecpy(dest,destend,ptr); }
-                else {
-                    switch (ptr[1]) {
-                        case 'a' : safecpy_char(dest,destend,0x07); ptr+=2; break; /* audible bell */
-                        case 'b' : safecpy_char(dest,destend,0x08); ptr+=2; break; /* backspce */
-                        case 'e' : safecpy_char(dest,destend,0x1B); ptr+=2; break; /* escape character */
-                        case 'f' : safecpy_char(dest,destend,0x0C); ptr+=2; break; /* form feed - new page */
-                        case 'n' : safecpy_char(dest,destend,0x0A); ptr+=2; break; /* line feed - new line */
-                        case 'r' : safecpy_char(dest,destend,0x0D); ptr+=2; break; /* carriage return */
-                        case 't' : safecpy_char(dest,destend,0x09); ptr+=2; break; /* horizontal tab */
-                        case 'v' : safecpy_char(dest,destend,0x0B); ptr+=2; break; /* vertical tab */
-                        case '\\': safecpy_char(dest,destend,0x5C); ptr+=2; break; /* backslash */
-                        case '\'': safecpy_char(dest,destend,0x27); ptr+=2; break; /* single quote */
-                        case '"' : safecpy_char(dest,destend,0x22); ptr+=2; break; /* double quote */
-                        case 'x' : /* a hexadecimal number */
-                            if ( (digit=hexvalue(ptr[2]))>=0 ) { ch=digit; ptr+=3;
-                                if ( (digit=hexvalue(*ptr))>=0 ) { ch=digit+(ch*16); ++ptr; }
-                                safecpy_char(dest,destend,ch);
-                            }
-                            break;
-                        default: /* a octal number */
-                            if ( (digit=octvalue(ptr[1]))>=0 ) { ch=digit; ptr+=2; 
-                                if ( (digit=octvalue(*ptr))>=0 ) { ch=digit+(ch*8); ++ptr; 
-                                    if ( (digit=octvalue(*ptr))>=0 ) { ch=digit+(ch*8); ++ptr; }
-                                }
-                                safecpy_char(dest,destend,ch);
-                            } else {
-                                /* a unknown escape sequence */
-                                safecpy_two(dest,destend,ptr);
-                            }
-                            break;
-                    }
-                }
-            }
-            safecpy_end(dest,destend);
-            return TRUE;
-
-        default:
-            return FALSE;
-    }
-}
 
 #define qeval_FirstImportantValue() theImportantList
 #define qeval_NextImportantValue(value) ((value)->nextImportant)
@@ -634,13 +617,6 @@ static void main_InitGlobals() {
     theErrorCount    = 0;
     theImportantList = NULL;
     theUnsolvedList  = NULL;
-}
-
-static void main_PrintVariant(const Variant* variant) {
-    utf8 str[1024]; int integer;
-    if      (qeval_ToInt16(variant,&integer))         { printf("%d ",integer); }
-    else if (qeval_ToString(variant,str,sizeof(str))) { printf("%s",str);      }
-    else                                              { printf("??? ");        }
 }
 
 static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
@@ -670,15 +646,15 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         do {
             variant = startEvaluation(ptr,&ptr);
-            main_PrintVariant(variant);
+            printVariant(variant);
             /* qeval_AddImportantValue(value,linenum,0); */
             continueScanning = (*ptr==CH_PARAM_SEP);
-            if  (continueScanning) { ++ptr; }
+            if  (continueScanning) { ++ptr; printSeparator(); }
         } while (continueScanning); 
         theVariant.astring.type  = TYPE_ASTRING;
         theVariant.astring.start = "\n";
         theVariant.astring.end   = theVariant.astring.start + 1;
-        main_PrintVariant(&theVariant);
+        printVariant(&theVariant);
     }
 
     /* place pointer in the first character of the next line and return it */

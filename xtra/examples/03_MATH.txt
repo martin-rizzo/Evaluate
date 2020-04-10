@@ -1,0 +1,10 @@
+; Mathematical expressions test
+
+PRINT "TESTING MATHEMATICAL EXPRESSIONS"
+PRINT "--------------------------------"
+PRINT "   100 + 100 =", 100 + 100
+PRINT "  2 + 8 * 3  =", 2 + 8 * 3
+PRINT " (2 + 8)* 3  =", (2 + 8)* 3
+PRINT "  2 +(8 * 3) =",  2 +(8 * 3)
+PRINT "   1<<8 | 1  =",  1<<8 | 1
+
