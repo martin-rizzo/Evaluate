@@ -6,19 +6,19 @@ PRINT ''
 
 PRINT 'TESTING QUOTES'
 PRINT '--------------'
-PRINT '   ''The "BEST" world''      = ', 'The "BEST" world'
-PRINT '   "The ''BEST'' world"      = ', "The 'BEST' world"
-PRINT '   "The \''BEST\'' world"    = ', "The \'BEST\' world"
-PRINT '   "The \"BEST\" world"    = ', "The \"BEST\" world"
+PRINT '   ''The "BEST" world''      =', 'The "BEST" world'
+PRINT '   "The ''BEST'' world"      =', "The 'BEST' world"
+PRINT '   "The \''BEST\'' world"    =', "The \'BEST\' world"
+PRINT '   "The \"BEST\" world"    =', "The \"BEST\" world"
 PRINT ''
 
 PRINT 'TESTING ESCAPE SEQUENCES'
 PRINT '------------------------'
-PRINT '   "C:\\WINDOWS\\DIR"      = ', "C:\\WINDOWS\\DIR"
-PRINT '   "8-|"                   = ', "8-|"
-PRINT '   "\070\055\174"          = ', "\070\055\174"
-PRINT '   "\x38\x2D\x7C"          = ', "\x38\x2D\x7C"
-PRINT '   "\t>tab1\t>tab2\t>tab3" = ', "\t>tab1\t>tab2\t>tab3"
-PRINT '   "\n#lin1\n#lin2\n#lin3" = ', "\n#lin1\n#lin2\n#lin3"
+PRINT '   "C:\\WINDOWS\\DIR"      =', "C:\\WINDOWS\\DIR"
+PRINT '   "8-|"                   =', "8-|"
+PRINT '   "\070\055\174"          =', "\070\055\174"
+PRINT '   "\x38\x2D\x7C"          =', "\x38\x2D\x7C"
+PRINT '   "\t>tab1\t>tab2\t>tab3" =', "\t>tab1\t>tab2\t>tab3"
+PRINT '   "\n#lin1\n#lin2\n#lin3" =', "\n#lin1\n#lin2\n#lin3"
 PRINT ''
 
