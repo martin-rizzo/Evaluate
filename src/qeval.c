@@ -472,7 +472,7 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 #define cPOP(stack)                     (stack.array[--stack.i])
 #define cPEEK(stack)                    (stack.array[stack.i-1])
 #define cEXECUTE(f, oStack, vStack) \
-    f(&vStack.array[vStack.i-2], &vStack.array[vStack.i-1], oStack.array[--oStack.i], &vStack.array[vStack.i-2]); \
+    f(&vStack.array[vStack.i-2], &vStack.array[vStack.i-2], oStack.array[--oStack.i], &vStack.array[vStack.i-1]); \
     --vStack.i;
 
 #define cWHILE_PRECEDENCE(cond, f, oStack, vStack) \
