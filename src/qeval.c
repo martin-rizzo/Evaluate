@@ -44,7 +44,7 @@
 #define MAX_ERRSTR_LEN  (63)          /* < ... */
 #define MAX_ERRMSG_LEN  (63)          /* < ... */
 #define CALC_STACK_SIZE (256)         /* < the calculator's stack size in number of elements */
-#define MAX_PRECEDENCE  63            /* < maximum valid operator predecence */
+#define MIN_PRECEDENCE  1             /* < the minimum valid operator predecence */
 
 
 
@@ -71,20 +71,28 @@ typedef enum ErrorID_ {
 
 /* supported operators */
 typedef enum OperatorID {
-    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR, OP_AND, OP_OR, OP_XOR, OP_INVALID
+    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR,
+    OP_EQ, OP_NE, OP_AND, OP_XOR, OP_OR, OP_LAND, OP_LOR, OP_INVALID
 } OperatorID;
 
 typedef struct Operator { OperatorID id; const utf8* str; int preced; } Operator;
 
 /* information about each supported operators */
-static const Operator theOperators[13] = {
-    {OP_SHL ,"<<",  0}, {OP_SHR  ,">>", 0}, {OP_AND,"& ",0}, {OP_OR ,"| ",0}, {OP_XOR,"^ ",5},
-    {OP_ADD ,"+ ",  6}, {OP_SUB  ,"- ", 6}, {OP_MUL,"* ",5}, {OP_DIV,"/ ",5}, {OP_MOD,"% ",5},
+static const Operator theOperators[15] = {
+    {OP_MUL ,"* ",11}, {OP_DIV,"/ ",11}, {OP_MOD,"% ",11},
+    {OP_ADD ,"+ ",10}, {OP_SUB,"- ",10},
+    {OP_SHL ,"<<", 9}, {OP_SHR,">>", 9},
+    {OP_EQ  ,"==", 7}, {OP_NE ,"!=", 7},
+    {OP_AND ,"& ", 6},
+    {OP_XOR ,"^ ", 5},
+    {OP_OR  ,"| ", 4},
+    {OP_LAND,"&&", 3},
+    {OP_LOR ,"||", 2},
+    /* {OP_TERN,"?",1} */
     {0,NULL,0}
 };
-
-static const Operator OpParenthesis = {OP_INVALID,"",(MAX_PRECEDENCE+1)};
-static const Operator OpSafeGuard   = {OP_INVALID,"",(MAX_PRECEDENCE+1)};
+static const Operator OpParenthesis = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
+static const Operator OpSafeGuard   = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
 
 
 typedef struct Error { ErrorID id; const utf8 *filename, *str; int line; } Error;
@@ -525,7 +533,7 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
                 cPUSH(opStack,&OpParenthesis); ++ptr;
             }
             else if (*ptr==')') {
-                cWHILE_PRECEDENCE(<=MAX_PRECEDENCE, calcOperation,opStack,vStack);
+                cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,opStack,vStack);
                 /* while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(calcOperation,opStack,vStack); } */
                 if (cPOP(opStack)!=&OpParenthesis) { error(ERR_UNEXPECTED_PTHESIS,0); return NULL; }
                 ++ptr;
@@ -533,7 +541,7 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
             else if ( readINumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readFNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readOperator(&op,ptr,&ptr) ) {
-                cWHILE_PRECEDENCE(<=op->preced, calcOperation,opStack,vStack);
+                cWHILE_PRECEDENCE(>=op->preced, calcOperation,opStack,vStack);
                 cPUSH(opStack, op);
             }
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
@@ -545,7 +553,7 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
         }
 
         /* process any pending operator before return */
-        cWHILE_PRECEDENCE(<=MAX_PRECEDENCE, calcOperation,opStack,vStack);
+        cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,opStack,vStack);
         /* while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(calcOperation,opStack,vStack); } */
         if ( cPEEK(opStack)==&OpParenthesis) { error(ERR_TOO_MANY_OPEN_PTHESES,0); return NULL; }
         if ( vStack.i!=3 || opStack.i!=2 ) { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
