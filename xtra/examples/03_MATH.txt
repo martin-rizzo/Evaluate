@@ -19,6 +19,11 @@ PRINT "    ~34 + 2 =", ~34 + 2
 PRINT ""
 PRINT "    2 * -3 = ", 2 * -3
 PRINT ""
+PRINT "      4  < 6 =", 4  < 6
+PRINT "      4  > 6 =", 4  > 6
+PRINT "      4 == 6 =", 4 == 6
+PRINT "      4 != 6 =", 4 != 6
+PRINT ""
 
 
 

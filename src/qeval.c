@@ -198,7 +198,8 @@ static Bool printErrorMessages(void) {
 /** IDs of supported operators */
 typedef enum OperatorID {
     OP_PLUS, OP_MINUS, OP_NOT, OP_LNOT, OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD,
-    OP_SHL, OP_SHR, OP_EQ, OP_NE, OP_AND, OP_XOR, OP_OR, OP_LAND, OP_LOR, OP_INVALID
+    OP_SHL, OP_SHR, OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE,
+    OP_AND, OP_XOR, OP_OR, OP_LAND, OP_LOR, OP_INVALID
 } OperatorID;
 
 /** Structure containing information about an operator (id, precedence, etc..) */
@@ -213,10 +214,11 @@ static const Operator UnaryOperators[5] = {
     {0,NULL,0}
 };
 /* info about each BINARY operator supported by qeval */
-static const Operator BinaryOperators[15] = {
+static const Operator BinaryOperators[19] = {
     {OP_MUL ,"* ",11}, {OP_DIV   ,"/ ",11}, {OP_MOD,"% ",11},
     {OP_ADD ,"+ ",10}, {OP_SUB   ,"- ",10},
     {OP_SHL ,"<<", 9}, {OP_SHR   ,">>", 9},
+    {OP_LE  ,"<=", 8}, {OP_GE    ,">=", 8}, {OP_LT,"< ",8}, {OP_GT,"> ",8},
     {OP_EQ  ,"==", 7}, {OP_NE    ,"!=", 7},
     {OP_AND ,"& ", 6},
     {OP_XOR ,"^ ", 5},
@@ -366,6 +368,9 @@ static int calcOperation(Variant* v, const Variant* left, const Operator *operat
         case OP_SHL  : return_INumber2(v, intL,<<,intR); case OP_SHR: return_INumber2(v, intL,>>,intR);
         case OP_AND  : return_INumber2(v, intL, &,intR); case OP_OR:  return_INumber2(v, intL, |,intR);
         case OP_XOR  : return_INumber2(v, intL, ^,intR); case OP_MOD: return_INumber2(v, intL, %,intR);
+        case OP_EQ   : return_INumber2(v, intL,==,intR); case OP_NE : return_INumber2(v, intL,!=,intR);
+        case OP_LT   : return_INumber2(v, intL,< ,intR); case OP_GT : return_INumber2(v, intL,> ,intR);
+        case OP_LE   : return_INumber2(v, intL,<=,intR); case OP_GE : return_INumber2(v, intL,>=,intR);
         default: assert(FALSE); break;
     } }
     else if ( variantToFloat(left,&float1) && variantToFloat(right,&float2) ) { switch (operator->id) {
