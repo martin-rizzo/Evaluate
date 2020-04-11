@@ -207,9 +207,13 @@ typedef struct Operator { OperatorID id; const utf8* str; int preced; } Operator
 static const Operator OpParenthesis = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
 static const Operator OpSafeGuard   = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
 
-/* information about each supported operators */
-static const Operator theOperators[17] = {
-  /*{OP_PLUS,"+ ",12}, {OPp_MINUS,"- ",12},*/ {OP_NOT,"~ ",12}, {OP_LNOT,"! ",12},
+/* info about each UNARY operator supported by qeval */
+static const Operator UnaryOperators[5] = {
+    {OP_PLUS,"+ ",12}, {OP_MINUS,"- ",12}, {OP_NOT,"~ ",12}, {OP_LNOT,"! ",12},
+    {0,NULL,0}
+};
+/* info about each BINARY operator supported by qeval */
+static const Operator BinaryOperators[15] = {
     {OP_MUL ,"* ",11}, {OP_DIV   ,"/ ",11}, {OP_MOD,"% ",11},
     {OP_ADD ,"+ ",10}, {OP_SUB   ,"- ",10},
     {OP_SHL ,"<<", 9}, {OP_SHR   ,">>", 9},
@@ -222,6 +226,7 @@ static const Operator theOperators[17] = {
     /* {OP_TERN,"?",1} */
     {0,NULL,0}
 };
+
 
 
 /*=================================================================================================================*/
@@ -241,15 +246,21 @@ typedef union  Variant {
 static const Variant EmptyVariant = { TYPE_EMPTY };
 
 static Bool variantToInt(const Variant* variant, int* i) {
-    if (variant->type==TYPE_INUMBER) { (*i)=variant->inumber.value;    return TRUE; }
-    if (variant->type==TYPE_ASTRING) { (*i)=variant->astring.start[0]; return TRUE; }
-    return FALSE;
+    switch( variant->type ) {
+        case TYPE_INUMBER: (*i)=variant->inumber.value;    return TRUE;
+        case TYPE_ASTRING: (*i)=variant->astring.start[0]; return TRUE;
+        case TYPE_EMPTY:   return TRUE;
+        default: return FALSE;
+    }
 }
 
 static Bool variantToFloat(const Variant* variant, float* f) {
-    if (variant->type==TYPE_FNUMBER) { (*f)=variant->fnumber.value;        return TRUE; }
-    if (variant->type==TYPE_INUMBER) { (*f)=(float)variant->inumber.value; return TRUE; }
-    return FALSE;
+    switch( variant->type ) {
+        case TYPE_FNUMBER: (*f)=variant->fnumber.value;        return TRUE;
+        case TYPE_INUMBER: (*f)=(float)variant->inumber.value; return TRUE;
+        case TYPE_EMPTY:   return TRUE;
+        default: return FALSE;
+    }
 }
 
 static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize) {
@@ -316,7 +327,7 @@ static void printVariant(const Variant* variant) {
     utf8 str[1024];
     switch (variant->type) {
         case TYPE_EMPTY:    printf("<empty>"); break;
-        case TYPE_UNSOLVED: printf("<??>"); break;
+        case TYPE_UNSOLVED: printf("<..?..>"); break;
         case TYPE_INUMBER:  printf("%d",variant->inumber.value); break;
         case TYPE_FNUMBER:  printf("%f",variant->fnumber.value); break;
         case TYPE_ASTRING:
@@ -342,15 +353,19 @@ static void printSeparator() { printf(" "); }
  * @param[in]  right      A variant containing the right operand
  */
 static int calcOperation(Variant* v, const Variant* left, const Operator *operator, const Variant* right) {
-    int int1,int2; float float1,float2;
+    int intL,intR; float float1,float2;
     assert( operator!=NULL && left!=NULL && right!=NULL );
     
-    if ( variantToInt(left,&int1) && variantToInt(right,&int2) ) { switch (operator->id) {
-        case OP_ADD: return_INumber2(v, int1, +,int2); case OP_SUB: return_INumber2(v, int1, -,int2);
-        case OP_MUL: return_INumber2(v, int1, *,int2); case OP_DIV: return_INumber2(v, int1, /,int2);
-        case OP_SHL: return_INumber2(v, int1,<<,int2); case OP_SHR: return_INumber2(v, int1,>>,int2);
-        case OP_AND: return_INumber2(v, int1, &,int2); case OP_OR:  return_INumber2(v, int1, |,int2);
-        case OP_XOR: return_INumber2(v, int1, ^,int2); case OP_MOD: return_INumber2(v, int1, %,int2);
+    if ( variantToInt(right,&intR) && variantToInt(left,&intL) ) { switch(operator->id) {
+        case OP_PLUS : return_INumber1(v, +, intR);
+        case OP_MINUS: return_INumber1(v, -, intR);
+        case OP_NOT  : return_INumber1(v, ~, intR);
+        case OP_LNOT : return_INumber1(v, !, intR);
+        case OP_ADD  : return_INumber2(v, intL, +,intR); case OP_SUB: return_INumber2(v, intL, -,intR);
+        case OP_MUL  : return_INumber2(v, intL, *,intR); case OP_DIV: return_INumber2(v, intL, /,intR);
+        case OP_SHL  : return_INumber2(v, intL,<<,intR); case OP_SHR: return_INumber2(v, intL,>>,intR);
+        case OP_AND  : return_INumber2(v, intL, &,intR); case OP_OR:  return_INumber2(v, intL, |,intR);
+        case OP_XOR  : return_INumber2(v, intL, ^,intR); case OP_MOD: return_INumber2(v, intL, %,intR);
         default: assert(FALSE); break;
     } }
     else if ( variantToFloat(left,&float1) && variantToFloat(right,&float2) ) { switch (operator->id) {
@@ -439,17 +454,18 @@ static Bool readFNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr
  * @returns
  *    FALSE when no operator can be read because the string format does not match with any known operator
  */
-static Bool readOperator(const Operator** out_op, const utf8* ptr, const utf8** out_endptr) {
+static Bool readOperator(const Operator** out_op, Bool precededByNumber, const utf8* ptr, const utf8** out_endptr) {
     const Operator* op; int firstchar;
     assert( out_op!=NULL && ptr!=NULL );
-    
+
     firstchar = ptr[0];
     if ( firstchar==CH_PARAM_SEP ) { return FALSE; }
-    for ( op=theOperators ; op->str!=NULL ; ++op ) {
+    op = (precededByNumber ? BinaryOperators : UnaryOperators); while (op->str!=NULL) {
         if ( op->str[0]==firstchar ) {
             if ( op->str[1]==' '    ) { *out_op=op; if (out_endptr) { (*out_endptr)=ptr+1; } return TRUE; }
             if ( op->str[1]==ptr[1] ) { *out_op=op; if (out_endptr) { (*out_endptr)=ptr+2; } return TRUE; }
         }
+        ++op;
     }
     /* the operator wasn't correctly identified */
     return FALSE;
@@ -500,7 +516,7 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
     const Operator* op; Variant variant, tmp;
-    utf8 name[MAX_NAME_LEN]; Bool continueScanning;
+    utf8 name[MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
 
@@ -540,21 +556,22 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
         cINITSTACK(opStack,   &OpSafeGuard, &OpSafeGuard);
         cINITSTACK(vStack,    EmptyVariant, EmptyVariant);
         while (*ptr!=CH_PARAM_SEP && !isendofcode(*ptr)) {
+            precededByNumber=!opPushed; opPushed=FALSE;
             if (*ptr=='(') {
-                cPUSH(opStack,&OpParenthesis); ++ptr;
+                cPUSH(opStack,&OpParenthesis); opPushed=TRUE; ++ptr;
             }
             else if (*ptr==')') {
                 cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
-                /* while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(calcOperation,opStack,vStack); } */
                 if (cPOP(opStack)!=&OpParenthesis) { error(ERR_UNEXPECTED_PTHESIS,0); return NULL; }
                 ++ptr;
             }
+            else if ( readOperator(&op,precededByNumber,ptr,&ptr) ) {
+                cWHILE_PRECEDENCE(>=op->preced, calcOperation,tmp,opStack,vStack);
+                cPUSH(opStack, op); opPushed=TRUE;
+                
+            }
             else if ( readINumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readFNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
-            else if ( readOperator(&op,ptr,&ptr) ) {
-                cWHILE_PRECEDENCE(>=op->preced, calcOperation,tmp,opStack,vStack);
-                cPUSH(opStack, op);
-            }
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
                 
                 assert( FALSE );
