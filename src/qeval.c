@@ -69,30 +69,6 @@ typedef enum ErrorID_ {
     ERR_DISP_MUST_BE_ZERO, ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
 } ErrorID;
 
-/* supported operators */
-typedef enum OperatorID {
-    OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_SHL, OP_SHR,
-    OP_EQ, OP_NE, OP_AND, OP_XOR, OP_OR, OP_LAND, OP_LOR, OP_INVALID
-} OperatorID;
-
-typedef struct Operator { OperatorID id; const utf8* str; int preced; } Operator;
-
-/* information about each supported operators */
-static const Operator theOperators[15] = {
-    {OP_MUL ,"* ",11}, {OP_DIV,"/ ",11}, {OP_MOD,"% ",11},
-    {OP_ADD ,"+ ",10}, {OP_SUB,"- ",10},
-    {OP_SHL ,"<<", 9}, {OP_SHR,">>", 9},
-    {OP_EQ  ,"==", 7}, {OP_NE ,"!=", 7},
-    {OP_AND ,"& ", 6},
-    {OP_XOR ,"^ ", 5},
-    {OP_OR  ,"| ", 4},
-    {OP_LAND,"&&", 3},
-    {OP_LOR ,"||", 2},
-    /* {OP_TERN,"?",1} */
-    {0,NULL,0}
-};
-static const Operator OpParenthesis = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
-static const Operator OpSafeGuard   = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
 
 
 typedef struct Error { ErrorID id; const utf8 *filename, *str; int line; } Error;
@@ -214,9 +190,42 @@ static Bool printErrorMessages(void) {
     return (theErrorCount>0);
 }
 
+/*=================================================================================================================*/
+#pragma mark - > OPERATORS
+
+/* Unary plus/minus, Logical/Bitwise NOT */
+
+/** IDs of supported operators */
+typedef enum OperatorID {
+    OP_PLUS, OP_MINUS, OP_NOT, OP_LNOT, OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD,
+    OP_SHL, OP_SHR, OP_EQ, OP_NE, OP_AND, OP_XOR, OP_OR, OP_LAND, OP_LOR, OP_INVALID
+} OperatorID;
+
+/** Structure containing information about an operator (id, precedence, etc..) */
+typedef struct Operator { OperatorID id; const utf8* str; int preced; } Operator;
+
+static const Operator OpParenthesis = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
+static const Operator OpSafeGuard   = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
+
+/* information about each supported operators */
+static const Operator theOperators[17] = {
+  /*{OP_PLUS,"+ ",12}, {OPp_MINUS,"- ",12},*/ {OP_NOT,"~ ",12}, {OP_LNOT,"! ",12},
+    {OP_MUL ,"* ",11}, {OP_DIV   ,"/ ",11}, {OP_MOD,"% ",11},
+    {OP_ADD ,"+ ",10}, {OP_SUB   ,"- ",10},
+    {OP_SHL ,"<<", 9}, {OP_SHR   ,">>", 9},
+    {OP_EQ  ,"==", 7}, {OP_NE    ,"!=", 7},
+    {OP_AND ,"& ", 6},
+    {OP_XOR ,"^ ", 5},
+    {OP_OR  ,"| ", 4},
+    {OP_LAND,"&&", 3},
+    {OP_LOR ,"||", 2},
+    /* {OP_TERN,"?",1} */
+    {0,NULL,0}
+};
+
 
 /*=================================================================================================================*/
-#pragma mark - > VARIANTS AND MATH
+#pragma mark - > VARIANTS
 
 typedef enum   VariantType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_ASTRING, TYPE_CSTRING, TYPE_INUMBER, TYPE_FNUMBER } VariantType;
 typedef union  Variant {
@@ -320,35 +329,37 @@ static void printVariant(const Variant* variant) {
 
 static void printSeparator() { printf(" "); }
 
-#define return_INumber(r,   int1, op,   int2) r->type=TYPE_INUMBER; r->inumber.value=   int1 op   int2; return
-#define return_FNumber(r, float1, op, float2) r->type=TYPE_FNUMBER; r->fnumber.value= float1 op float2; return
+#define return_INumber1(v,       op, right) v->type=TYPE_INUMBER; v->inumber.value=      op right; return 0
+#define return_INumber2(v, left, op, right) v->type=TYPE_INUMBER; v->inumber.value= left op right; return 1
+#define return_FNumber1(v,       op, right) v->type=TYPE_FNUMBER; v->fnumber.value=      op right; return 0
+#define return_FNumber2(v, left, op, right) v->type=TYPE_FNUMBER; v->fnumber.value= left op right; return 1
 
 /**
  * Calculates a simple mathematical operation between two variants applying the provided operator
- * @param[out] r          Pointer to the variant where the calculation result will be stored
- * @param[in]  variant1   The left operand
+ * @param[out] v          Pointer to the variant where the calculation result will be stored
+ * @param[in]  left       A variant containing the left operand
  * @param[in]  operator   The operation to apply
- * @param[in]  variant2   The right operand
+ * @param[in]  right      A variant containing the right operand
  */
-static void calcOperation(Variant* r, const Variant* variant1, const Operator *operator, const Variant* variant2) {
+static int calcOperation(Variant* v, const Variant* left, const Operator *operator, const Variant* right) {
     int int1,int2; float float1,float2;
-    assert( operator!=NULL && variant1!=NULL && variant2!=NULL );
+    assert( operator!=NULL && left!=NULL && right!=NULL );
     
-    if ( variantToInt(variant1,&int1) && variantToInt(variant2,&int2) ) { switch (operator->id) {
-        case OP_ADD: return_INumber(r, int1, +,int2); case OP_SUB: return_INumber(r, int1, -,int2);
-        case OP_MUL: return_INumber(r, int1, *,int2); case OP_DIV: return_INumber(r, int1, /,int2);
-        case OP_SHL: return_INumber(r, int1,<<,int2); case OP_SHR: return_INumber(r, int1,>>,int2);
-        case OP_AND: return_INumber(r, int1, &,int2); case OP_OR:  return_INumber(r, int1, |,int2);
-        case OP_XOR: return_INumber(r, int1, ^,int2); case OP_MOD: return_INumber(r, int1, %,int2);
+    if ( variantToInt(left,&int1) && variantToInt(right,&int2) ) { switch (operator->id) {
+        case OP_ADD: return_INumber2(v, int1, +,int2); case OP_SUB: return_INumber2(v, int1, -,int2);
+        case OP_MUL: return_INumber2(v, int1, *,int2); case OP_DIV: return_INumber2(v, int1, /,int2);
+        case OP_SHL: return_INumber2(v, int1,<<,int2); case OP_SHR: return_INumber2(v, int1,>>,int2);
+        case OP_AND: return_INumber2(v, int1, &,int2); case OP_OR:  return_INumber2(v, int1, |,int2);
+        case OP_XOR: return_INumber2(v, int1, ^,int2); case OP_MOD: return_INumber2(v, int1, %,int2);
         default: assert(FALSE); break;
     } }
-    else if ( variantToFloat(variant1,&float1) && variantToFloat(variant2,&float2) ) { switch (operator->id) {
-        case OP_ADD: return_FNumber(r, float1, +,float2); case OP_SUB: return_FNumber(r, float1, -,float2);
-        case OP_MUL: return_FNumber(r, float1, *,float2); case OP_DIV: return_FNumber(r, float1, /,float2);
+    else if ( variantToFloat(left,&float1) && variantToFloat(right,&float2) ) { switch (operator->id) {
+        case OP_ADD: return_FNumber2(v, float1, +,float2); case OP_SUB: return_FNumber2(v, float1, -,float2);
+        case OP_MUL: return_FNumber2(v, float1, *,float2); case OP_DIV: return_FNumber2(v, float1, /,float2);
         default: assert(FALSE); break;
     } }
-    (*r) = (*variant1);
-    return;
+    (*v) = (*right);
+    return 0;
 }
 
 
@@ -479,16 +490,16 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 #define cPUSH(stack,value)              (stack.array[stack.i++]=value)
 #define cPOP(stack)                     (stack.array[--stack.i])
 #define cPEEK(stack)                    (stack.array[stack.i-1])
-#define cEXECUTE(f, oStack, vStack) \
-    f(&vStack.array[vStack.i-2], &vStack.array[vStack.i-2], oStack.array[--oStack.i], &vStack.array[vStack.i-1]); \
-    --vStack.i;
+#define cEXECUTE(f, tmp, oStack, vStack) \
+    vStack.i -= f(&tmp, &vStack.array[vStack.i-2], oStack.array[--oStack.i], &vStack.array[vStack.i-1]); \
+    vStack.array[vStack.i-1] = tmp;
 
-#define cWHILE_PRECEDENCE(cond, f, oStack, vStack) \
-    while (cPEEK(oStack)->preced cond) { cEXECUTE(f,oStack,vStack); }
+#define cWHILE_PRECEDENCE(cond, f, tmp, oStack, vStack) \
+    while (cPEEK(oStack)->preced cond) { cEXECUTE(f,tmp,oStack,vStack); }
 
 static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
-    const Operator* op; Variant variant;
+    const Operator* op; Variant variant, tmp;
     utf8 name[MAX_NAME_LEN]; Bool continueScanning;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
@@ -533,7 +544,7 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
                 cPUSH(opStack,&OpParenthesis); ++ptr;
             }
             else if (*ptr==')') {
-                cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,opStack,vStack);
+                cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
                 /* while (cPEEK(opStack)!=&OpParenthesis) { cEXECUTE(calcOperation,opStack,vStack); } */
                 if (cPOP(opStack)!=&OpParenthesis) { error(ERR_UNEXPECTED_PTHESIS,0); return NULL; }
                 ++ptr;
@@ -541,7 +552,7 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
             else if ( readINumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readFNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readOperator(&op,ptr,&ptr) ) {
-                cWHILE_PRECEDENCE(>=op->preced, calcOperation,opStack,vStack);
+                cWHILE_PRECEDENCE(>=op->preced, calcOperation,tmp,opStack,vStack);
                 cPUSH(opStack, op);
             }
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
@@ -553,7 +564,7 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
         }
 
         /* process any pending operator before return */
-        cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,opStack,vStack);
+        cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
         /* while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(calcOperation,opStack,vStack); } */
         if ( cPEEK(opStack)==&OpParenthesis) { error(ERR_TOO_MANY_OPEN_PTHESES,0); return NULL; }
         if ( vStack.i!=3 || opStack.i!=2 ) { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
