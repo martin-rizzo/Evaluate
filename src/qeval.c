@@ -276,11 +276,11 @@ typedef enum   VariantType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_ASTRING, TYPE_CSTRI
 typedef union  Variant {
     VariantType type;
     struct { VariantType type;                          } empty;     /* < empty data          */
-    struct { VariantType type; const utf8 *start;       } unsolved;  /* < unsolved expression */
-    struct { VariantType type; const utf8 *start, *end; } astring;   /* < assembler string    */
-    struct { VariantType type; const utf8 *start, *end; } cstring;   /* < C string            */
     struct { VariantType type; int   value;             } inumber;   /* < integer number      */
     struct { VariantType type; float value;             } fnumber;   /* < float point number  */
+    struct { VariantType type; const utf8 *begin, *end; } astring;   /* < assembler string    */
+    struct { VariantType type; const utf8 *begin, *end; } cstring;   /* < C string            */
+    struct { VariantType type; const utf8 *begin, *end; } unsolved;  /* < unsolved expression */
 } Variant;
 
 static const Variant EmptyVariant = { TYPE_EMPTY };
@@ -288,7 +288,7 @@ static const Variant EmptyVariant = { TYPE_EMPTY };
 static Bool variantToInt(const Variant* variant, int* i) {
     switch( variant->type ) {
         case TYPE_INUMBER: (*i)=variant->inumber.value;    return TRUE;
-        case TYPE_ASTRING: (*i)=variant->astring.start[0]; return TRUE;
+        case TYPE_ASTRING: (*i)=variant->astring.begin[0]; return TRUE;
         case TYPE_EMPTY:   return TRUE;
         default: return FALSE;
     }
@@ -310,7 +310,7 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
             
         case TYPE_ASTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
-            ptr=variant->astring.start; ptrend=variant->astring.end;
+            ptr=variant->astring.begin; ptrend=variant->astring.end;
             do {
                 while (ptr<ptrend && *ptr!=CH_ASMSTRING) { safecpy(dest,destend,ptr); }
                 if  (ptr<ptrend) { safecpy_char(dest,destend,CH_ASMSTRING); ptr+=2; }
@@ -320,7 +320,7 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
 
         case TYPE_CSTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
-            ptr=variant->cstring.start; while(ptr<variant->cstring.end) {
+            ptr=variant->cstring.begin; while(ptr<variant->cstring.end) {
                 if (ptr[0]!=CH_STRING_ESCAPE) { safecpy(dest,destend,ptr); }
                 else {
                     switch (ptr[1]) {
@@ -421,6 +421,54 @@ static int calcOperation(Variant* v, const Variant* left, const Operator *operat
     return 0;
 }
 
+
+/*=================================================================================================================*/
+#pragma mark - > VARIANT CONTAINERS
+
+typedef struct VariantElement {
+    Variant variant; union { int integer; const utf8* string; } key;
+    struct VariantElement* next;
+} VariantElement;
+
+typedef struct VariantList { VariantElement *first, *last; } VariantList;
+
+
+static void copyVariant(Variant* dest, const Variant* sour) {
+    int length; utf8* begin;
+    assert( dest!=NULL && sour!=NULL );
+    switch ( (dest->type=sour->type) ) {
+        case TYPE_EMPTY: break;
+        case TYPE_INUMBER: dest->inumber.value = sour->inumber.value; break;
+        case TYPE_FNUMBER: dest->fnumber.value = sour->fnumber.value; break;
+        case TYPE_ASTRING:
+        case TYPE_CSTRING:
+        case TYPE_UNSOLVED:
+            length = (int)(sour->astring.end - sour->astring.begin);
+            dest->astring.begin = (begin = stalloc(length+1));
+            dest->astring.end   = begin + length;
+            memcpy(begin, sour->astring.begin, length); begin[length]='\0';
+            break;
+    }
+}
+
+static void addVariantElementToList(VariantList* list, VariantElement* elementToAdd) {
+    if (list->last) { list->last = (list->last->next = elementToAdd); }
+    else            { list->last = (list->first = elementToAdd);      }
+}
+
+static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, int integerKey) {
+    VariantElement* element = stalloc(sizeof(VariantElement));
+    element->key.integer = integerKey;
+    copyVariant(&element->variant, variantToAdd);
+    addVariantElementToList(list, element);
+}
+
+static void addVariantToListKS(VariantList* list, const Variant* variantToAdd, const utf8* stringKey) {
+    VariantElement* element = stalloc(sizeof(VariantElement));
+    element->key.string = stringKey;
+    copyVariant(&element->variant, variantToAdd);
+    addVariantElementToList(list, element);
+}
 
 /*=================================================================================================================*/
 #pragma mark - > READING ELEMENTS FROM THE TEXT buffer
@@ -565,16 +613,17 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
 
     theVariant.unsolved.type  = TYPE_UNSOLVED;
-    theVariant.unsolved.start = ptr;
-
+    theVariant.unsolved.begin = ptr;
     skipblankspaces(ptr);
+    
+    /*-- evaluate empty  ----------------------*/
     if ( *ptr==CH_PARAM_SEP || isendofline(*ptr) ) {
         theVariant.empty.type = TYPE_EMPTY;
     }
     /*-- evaluate C string --------------------*/
     else if ( *ptr==CH_CSTRING ) {
         theVariant.cstring.type  = TYPE_CSTRING;
-        theVariant.cstring.start = ++ptr;
+        theVariant.cstring.begin = ++ptr;
         do {
             while ( !isendofcode(*ptr) && *ptr!=CH_CSTRING) { ++ptr; }
             continueScanning = ptr[0]==CH_CSTRING && *(ptr-1)==CH_STRING_ESCAPE;
@@ -586,7 +635,7 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
     /*-- evaluate ASM string ------------------*/
     else if ( *ptr==CH_ASMSTRING ) {
         theVariant.astring.type  = TYPE_ASTRING;
-        theVariant.astring.start = ++ptr;
+        theVariant.astring.begin = ++ptr;
         do {
             while ( !isendofcode(*ptr) && *ptr!=CH_ASMSTRING) { ++ptr; }
             continueScanning = ptr[0]==CH_ASMSTRING && ptr[1]==CH_ASMSTRING;
