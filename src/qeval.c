@@ -37,14 +37,15 @@
 #define VERSION   "0.1"
 #define COPYRIGHT "Copyright (c) 2020 Martin Rizzo"
 
-#define MIN_FILE_SIZE   (0)           /* < minimum size for loadable files (in bytes)   */
-#define MAX_FILE_SIZE   (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
-#define MAX_ERROR_COUNT (32)          /* < maximum number of errors able to be reported */
-#define MAX_NAME_LEN    (63)          /* < maximum length for names of labels, opcodes, symbols, etc (in bytes) */
-#define MAX_ERRSTR_LEN  (63)          /* < ... */
-#define MAX_ERRMSG_LEN  (63)          /* < ... */
-#define CALC_STACK_SIZE (256)         /* < the calculator's stack size in number of elements */
-#define MIN_PRECEDENCE  1             /* < the minimum valid operator predecence */
+#define MIN_FILE_SIZE      (0)           /* < minimum size for loadable files (in bytes)   */
+#define MAX_FILE_SIZE      (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
+#define MAX_ERROR_COUNT    (32)          /* < maximum number of errors able to be reported */
+#define MAX_NAME_LEN       (63)          /* < maximum length for names of vars (in bytes)  */
+#define MAX_ERRSTR_LEN     (63)          /* < ... */
+#define MAX_ERRMSG_LEN     (63)          /* < ... */
+#define CALC_STACK_SIZE    (256)         /* < the calculator's stack size in number of elements */
+#define STALLOC_CHUNK_SIZE (64*1024)     /* < size of each chunk of memory allocated by autoalloc */
+#define MIN_PRECEDENCE     (1)           /* < the minimum valid operator predecence */
 
 
 
@@ -120,6 +121,40 @@ static const utf8 * strreplace(utf8 *buffer, const utf8 *message, int charToRepl
         else { *dest++=*ptr++; }
     }
     *dest='\0'; return buffer;
+}
+
+
+/*=================================================================================================================*/
+#pragma mark - > PSEUDO STATIC ALLOCATION
+
+typedef struct StallocChunk { struct StallocChunk* next; char data[STALLOC_CHUNK_SIZE]; } StallocChunk;
+StallocChunk* theStallocChunk     = NULL;
+char*         theStallocPtr       = NULL;
+int           theStallocRemaining = 0;
+
+/**
+ * Allocates a block of memory that stays valid until the end of the program
+ * @param size The size of the memory block to alloc, in bytes
+ * @return     A pointer to the beginning of the block
+ */
+static void* stalloc(int size) {
+    void* ptr;
+    if (theStallocRemaining<size) {
+        if (theStallocChunk) { theStallocChunk->next = malloc(sizeof(StallocChunk)); }
+        theStallocPtr       = ( theStallocChunk=theStallocChunk->next )->data;
+        theStallocRemaining = STALLOC_CHUNK_SIZE;
+    }
+    ptr=theStallocPtr; theStallocPtr+=size; theStallocRemaining-=size;
+    return ptr;
+}
+
+/**
+ * Deallocates all memory that previously was allocated with 'stalloc(..)'
+ */
+static void stallocFreeAll() {
+    StallocChunk *chunk, *nextChunk=NULL;
+    for (chunk=theStallocChunk; chunk; chunk=nextChunk) { nextChunk=chunk->next; free(chunk); }
+    theStallocPtr=NULL; theStallocChunk=NULL; theStallocRemaining=0;
 }
 
 
@@ -798,6 +833,7 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+    stallocFreeAll();
     return success ? 0 : -1;
 }
 
