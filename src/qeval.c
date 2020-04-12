@@ -126,10 +126,12 @@ static const utf8 * strreplace(utf8 *buffer, const utf8 *message, int charToRepl
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
 
-static Error       theErrors[MAX_ERROR_COUNT];
-static const utf8 *theFileName   = NULL;
-static int         theLineNumber = 0;
-static int         theErrorCount = 0;
+static struct Globals {
+    const utf8* curFilePath;
+    int         curLineNumber;
+    Error       errors[MAX_ERROR_COUNT];
+    int         errorCount;
+} g;
 
 #ifdef NDEBUG
 #    define DLOG(x)
@@ -141,7 +143,7 @@ static int         theErrorCount = 0;
  * Global var that indicates whether the program is being successfully executed.
  * It is TRUE while no error is reported.
  */
-#define success (theErrorCount==0)
+#define success (g.errorCount==0)
 
 /**
  * Reports a error
@@ -149,18 +151,18 @@ static int         theErrorCount = 0;
  * @param str      The optional text attached to the error reported (it can be NULL)
  */
 static Bool error(ErrorID errorID, const utf8 *str) {
-    Error *error; if (theErrorCount<MAX_ERROR_COUNT) {
-        error = &theErrors[theErrorCount++];
+    Error *error; if (g.errorCount<MAX_ERROR_COUNT) {
+        error = &g.errors[g.errorCount++];
         error->id=errorID;
-        error->filename=stralloc(theFileName,-1);
-        error->line=theLineNumber;
+        error->filename=stralloc(g.curFilePath,-1);
+        error->line=g.curLineNumber;
         error->str=stralloc(str,MAX_ERRSTR_LEN);
     }
     return (errorID==ERR_NO_ERROR);
 }
 
 static Bool printErrorMessages(void) {
-    const utf8 *message; Error *error=theErrors; int count=theErrorCount;
+    const utf8 *message; Error *error=g.errors; int count=g.errorCount;
     utf8 buffer[ (MAX_ERRMSG_LEN+1)+(MAX_ERRSTR_LEN+1) ];
 
     while (--count>=0) {
@@ -187,13 +189,11 @@ static Bool printErrorMessages(void) {
         else             { printf("%s %s\n", "error:", message); }
         ++error;
     }
-    return (theErrorCount>0);
+    return (g.errorCount>0);
 }
 
 /*=================================================================================================================*/
 #pragma mark - > OPERATORS
-
-/* Unary plus/minus, Logical/Bitwise NOT */
 
 /** IDs of supported operators */
 typedef enum OperatorID {
@@ -205,30 +205,33 @@ typedef enum OperatorID {
 /** Structure containing information about an operator (id, precedence, etc..) */
 typedef struct Operator { OperatorID id; const utf8* str; int preced; } Operator;
 
-static const Operator OpParenthesis = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
-static const Operator OpSafeGuard   = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
-
-/* info about each UNARY operator supported by qeval */
+/** Array containing info about each UNARY operator. The last element in {0,0,0} */
 static const Operator UnaryOperators[5] = {
     {OP_PLUS,"+ ",12}, {OP_MINUS,"- ",12}, {OP_NOT,"~ ",12}, {OP_LNOT,"! ",12},
-    {0,NULL,0}
+    {0,0,0}
 };
-/* info about each BINARY operator supported by qeval */
+/** Array containing info about each BINARY operator. The last element is {0,0,0} */
 static const Operator BinaryOperators[19] = {
-    {OP_MUL ,"* ",11}, {OP_DIV   ,"/ ",11}, {OP_MOD,"% ",11},
-    {OP_ADD ,"+ ",10}, {OP_SUB   ,"- ",10},
     {OP_SHL ,"<<", 9}, {OP_SHR   ,">>", 9},
-    {OP_LE  ,"<=", 8}, {OP_GE    ,">=", 8}, {OP_LT,"< ",8}, {OP_GT,"> ",8},
+    {OP_LE  ,"<=", 8}, {OP_GE    ,">=", 8},
     {OP_EQ  ,"==", 7}, {OP_NE    ,"!=", 7},
+    {OP_LAND,"&&", 3},
+    {OP_LOR ,"||", 2},
+    {OP_MUL ,"* ",11}, {OP_DIV,"/ ",11}, {OP_MOD,"% ",11},
+    {OP_ADD ,"+ ",10}, {OP_SUB,"- ",10},
+    {OP_LT  ,"< ", 8}, {OP_GT ,"> ", 8},
     {OP_AND ,"& ", 6},
     {OP_XOR ,"^ ", 5},
     {OP_OR  ,"| ", 4},
-    {OP_LAND,"&&", 3},
-    {OP_LOR ,"||", 2},
     /* {OP_TERN,"?",1} */
-    {0,NULL,0}
+    {0,0,0}
 };
 
+/** Special operator object used to mark parenthesis */
+static const Operator OpParenthesis = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
+
+/** Special operator object used to mark limits in the evaluator stack */
+static const Operator OpSafeGuard   = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
 
 
 /*=================================================================================================================*/
@@ -325,6 +328,7 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
     }
 }
 
+/*
 static void printVariant(const Variant* variant) {
     utf8 str[1024];
     switch (variant->type) {
@@ -339,8 +343,8 @@ static void printVariant(const Variant* variant) {
             break;
     }
 }
+*/
 
-static void printSeparator() { printf(" "); }
 
 #define return_INumber1(v,       op, right) v->type=TYPE_INUMBER; v->inumber.value=      op right; return 0
 #define return_INumber2(v, left, op, right) v->type=TYPE_INUMBER; v->inumber.value= left op right; return 1
@@ -518,7 +522,7 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 #define cWHILE_PRECEDENCE(cond, f, tmp, oStack, vStack) \
     while (cPEEK(oStack)->preced cond) { cEXECUTE(f,tmp,oStack,vStack); }
 
-static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
+static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
     const Operator* op; Variant variant, tmp;
     utf8 name[MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
@@ -601,75 +605,64 @@ static Variant * startEvaluation(const utf8 *start, const utf8 **out_end) {
 
 
 /*=================================================================================================================*/
-#pragma mark - > QEVAL
+#pragma mark - > DEFERRED OUTPUT
 
-/*
-    named-map     :  name -> [Value]
-    delayed-list  :  [Values]
-    unsolved-list :  [Values]
+typedef struct DeferredOutput {
+    int     userValue;
+    Variant variant;
+} DeferredOutput;
 
-
-    LD HL, delayed           -> exp = Solve("delayed"); AddToDelayList(exp, address, linenum)
-    delayed  EQU constant*2  -> exp = Solve("constant*2"); AddToDelayList(exp,0,linenum); SetConst(delayed, exp)
-    constant EQU 100+10      -> exp = Solve("100+10"); SetConst(constant, exp)
-    LD HL, constant          -> exp = Solve("constant"); (*address) = ToInt16(exp)
-
-
-*/
-
-Variant * theImportantList;
-Variant * theUnsolvedList;
-
-
-/*
-static Bool qeval_AddConstant(const utf8 *name, Value *value) {
-    return TRUE;
+static void addDeferredOutput(int userValue, const Variant* variant) {
+    utf8 str[256];
+    switch (variant->type) {
+        case TYPE_EMPTY:    printf("<empty>"); break;
+        case TYPE_UNSOLVED: printf("<..?..>"); break;
+        case TYPE_INUMBER:  printf("%d",variant->inumber.value); break;
+        case TYPE_FNUMBER:  printf("%f",variant->fnumber.value); break;
+        case TYPE_ASTRING:
+        case TYPE_CSTRING:
+            variantToString(variant,str,sizeof(str));
+            printf("%s",str);
+            break;
+    }
+    printf(userValue ? "\n" : " ");
 }
-*/
 
-/*
-static Bool qeval_AddVariable(const utf8 *name, Value *value) {
-    assert( FALSE );
-    return TRUE;
+static DeferredOutput* getFirstDeferredOutput(void) {
+    return NULL;
 }
-*/
 
-/*
-static Bool qeval_AddImportantValue(Value *value, int user1, int user2) {
-    value->user1 = user1;
-    value->user2 = user2;
-    value->prev = last;
-    last->next  = value;
-    return TRUE;
+static DeferredOutput* getNextDeferredOutput(DeferredOutput* output) {
+    assert( output!=NULL );
+    return NULL;
 }
- */
-
-
-#define qeval_FirstImportantValue() theImportantList
-#define qeval_NextImportantValue(value) ((value)->nextImportant)
 
 /*=================================================================================================================*/
-#pragma mark - > MAIN
+#pragma mark - > MAIN CODE
 
+/*
+ qeval addConstant(..)
+ qeval evaluateExpression(..)
+ qeval addDeferredOutput(..)
+ qeval solveDeferredOutputs(..)
+ qeval getNextDeferredOutput(..)
+ */
 
-static void main_InitGlobals() {
-    theFileName      = NULL;
-    theLineNumber    = 0;
-    theErrorCount    = 0;
-    theImportantList = NULL;
-    theUnsolvedList  = NULL;
+static void init(void) {
+    g.curFilePath   = NULL;
+    g.curLineNumber = 0;
+    g.errorCount    = 0;
 }
 
-static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
+static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
     Bool printByDefault = FALSE;
     Bool continueScanning;
     Variant* variant;
-    const utf8 *ptr = start;
     utf8 name[128], *dest, *destend;
 
     /* skip all blank spaces at the beginning of the line */
-    ptr=start; while ( isblank(*ptr) ) { ++ptr; }
+    while ( isblank(*ptr) ) { ++ptr; }
 
     /* extract name */
     safecpy_begin( dest, destend, name, sizeof(name) );
@@ -679,35 +672,30 @@ static Bool main_EvaluateTextLine(const utf8 *start, const utf8 **out_end) {
 
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
-        variant = startEvaluation(ptr+1,&ptr);
-        /* DLOG_VARIANT(*variant); */
-        /* qeval_AddConstantValue(name,value); */
+        variant = evaluateExpression(ptr+1,&ptr);
+        /* addConstant(name,variant); */
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         do {
-            variant = startEvaluation(ptr,&ptr);
-            printVariant(variant);
-            /* qeval_AddImportantValue(value,linenum,0); */
-            continueScanning = (*ptr==CH_PARAM_SEP);
-            if  (continueScanning) { ++ptr; printSeparator(); }
-        } while (continueScanning); 
-        theVariant.astring.type  = TYPE_ASTRING;
-        theVariant.astring.start = "\n";
-        theVariant.astring.end   = theVariant.astring.start + 1;
-        printVariant(&theVariant);
+            variant          = evaluateExpression(ptr,&ptr);
+            continueScanning = (*ptr==CH_PARAM_SEP); if (continueScanning) { ++ptr; }
+            addDeferredOutput(!continueScanning,variant);
+        } while (continueScanning);
     }
 
     /* place pointer in the first character of the next line and return it */
     while (!isendofline(*ptr)) { ++ptr; } skipendofline(ptr);
-    if (out_end) { (*out_end) = ptr; }
+    if (out_endptr) { (*out_endptr) = ptr; }
     return TRUE;
 }
 
-static utf8 * allocFileBuffer(const utf8* filePath) {
-    FILE *file=NULL; utf8 *fileBuffer=NULL; long fileSize=0;
-    assert(filePath!=NULL);
-
+static Bool evaluateFile(const utf8* filePath) {
+    FILE* file=NULL; long fileSize=0; utf8 *fileBuffer=NULL; const utf8 *ptr;
+    const utf8* prevFilePath; int prevLineNumber;
+    assert( filePath!=NULL );
+    
+    /* try to load the entire file to a buffer */
     if (success) {
         file=fopen(filePath,"rb"); if (!file) { error(ERR_FILE_NOT_FOUND,filePath); }
     }
@@ -722,23 +710,48 @@ static utf8 * allocFileBuffer(const utf8* filePath) {
         if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { error(ERR_CANNOT_READ_FILE,filePath); }
         else { fileBuffer[fileSize]=CH_ENDFILE; }
     }
-    if (!success) { free(fileBuffer); fileBuffer=NULL; }
     if (file) { fclose(file); }
-    return fileBuffer;
-}
-
-
-static void main_PrintImportantValues() {
-    /*
-    utf8 str[1024];
-    Value *value = qeval_FirstImportantValue();
-    while (value) {
-        if ( qeval_ToString(value,str,sizeof(str)) ) { printf("%s",str); }
-        else                                         { printf("<?>");  }
-        value = qeval_NextImportantValue(value);
+    
+    /* if the file is loaded in buffer    */
+    /* then evaluate all lines one by one */
+    if (success) {
+        prevFilePath   = g.curFilePath   ; g.curFilePath   = filePath;
+        prevLineNumber = g.curLineNumber ; g.curLineNumber = 1;
+        ptr = fileBuffer; while ( *ptr!=CH_ENDFILE && success ) {
+            evaluateTextLine(ptr,&ptr); ++g.curLineNumber;
+        }
+        g.curFilePath   = prevFilePath;
+        g.curLineNumber = prevLineNumber;
     }
-    */
+    /* release resources and return */
+    free(fileBuffer);
+    return success ? TRUE : FALSE;
 }
+
+
+/*=================================================================================================================*/
+#pragma mark - > MAIN
+
+/*
+static void printDeferredOutput() {
+    int line=1; DeferredOutput* output;
+    for ( output=getFirstDeferredOutput(); output; output=getNextDeferredOutput(output) ) {
+        while (line<output->user) { printf("\n"); ++line; }
+        switch (output->variant->type) {
+            case TYPE_EMPTY:    printf("<empty>"); break;
+            case TYPE_UNSOLVED: printf("<..?..>"); break;
+            case TYPE_INUMBER:  printf("%d",output->variant->inumber.value); break;
+            case TYPE_FNUMBER:  printf("%f",output->variant->fnumber.value); break;
+            case TYPE_ASTRING:
+            case TYPE_CSTRING:
+                variantToString(variant,str,sizeof(str));
+                printf("%s",str);
+                break;
+        }
+    }
+}
+*/
+
 
 /*=================================================================================================================*/
 #pragma mark - > MAIN
@@ -748,7 +761,7 @@ static void main_PrintImportantValues() {
 
 
 int main(int argc, char *argv[]) {
-    int i; const utf8 *fileBuffer, *ptr;
+    int i;
     const utf8 *param;
     const utf8 *help[] = {
         "USAGE: qeval [options] file-to-evaluate","",
@@ -776,24 +789,16 @@ int main(int argc, char *argv[]) {
     
     /* evaluate any file provided in the command line */
     if (numberOfFiles>0) {
-        main_InitGlobals();
-        for (i=0; i<numberOfFiles; ++i) {
-            theFileName   = filePaths[i];
-            theLineNumber = 0;
-            fileBuffer = allocFileBuffer(theFileName);
-            if (fileBuffer) {
-                ptr=fileBuffer; theLineNumber=1;
-                while ( *ptr!=CH_ENDFILE && success ) {
-                    main_EvaluateTextLine(ptr,&ptr);
-                    ++theLineNumber;
-                }
+        init();
+        for (i=0; i<numberOfFiles; ++i) { evaluateFile(filePaths[i]); }
+        if (!printErrorMessages()) {
+            DeferredOutput* output = getFirstDeferredOutput();
+            while (output) {
+                output = getNextDeferredOutput(output);
             }
-            free((void*)fileBuffer);
         }
-        if (!printErrorMessages()) { main_PrintImportantValues(); }
     }
-    
-    return 0;
+    return success ? 0 : -1;
 }
 
 
