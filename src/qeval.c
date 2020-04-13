@@ -138,12 +138,14 @@ int           theStallocRemaining = 0;
  * @return     A pointer to the beginning of the block
  */
 static void* stalloc(int size) {
-    void* ptr;
+    StallocChunk* prevStallocChunk; void* ptr;
     if (theStallocRemaining<size) {
-        if (theStallocChunk) { theStallocChunk->next = malloc(sizeof(StallocChunk)); }
-        theStallocPtr       = ( theStallocChunk=theStallocChunk->next )->data;
+        prevStallocChunk=theStallocChunk; theStallocChunk=malloc(sizeof(StallocChunk));
+        if (prevStallocChunk) { prevStallocChunk->next = theStallocChunk; }
+        theStallocPtr       = theStallocChunk->data;
         theStallocRemaining = STALLOC_CHUNK_SIZE;
     }
+    /* allocates the first 'size' bytes counting from 'theStallocPtr' */
     ptr=theStallocPtr; theStallocPtr+=size; theStallocRemaining-=size;
     return ptr;
 }
@@ -363,24 +365,6 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
     }
 }
 
-/*
-static void printVariant(const Variant* variant) {
-    utf8 str[1024];
-    switch (variant->type) {
-        case TYPE_EMPTY:    printf("<empty>"); break;
-        case TYPE_UNSOLVED: printf("<..?..>"); break;
-        case TYPE_INUMBER:  printf("%d",variant->inumber.value); break;
-        case TYPE_FNUMBER:  printf("%f",variant->fnumber.value); break;
-        case TYPE_ASTRING:
-        case TYPE_CSTRING:
-            variantToString(variant,str,sizeof(str));
-            printf("%s",str);
-            break;
-    }
-}
-*/
-
-
 #define return_INumber1(v,       op, right) v->type=TYPE_INUMBER; v->inumber.value=      op right; return 0
 #define return_INumber2(v, left, op, right) v->type=TYPE_INUMBER; v->inumber.value= left op right; return 1
 #define return_FNumber1(v,       op, right) v->type=TYPE_FNUMBER; v->fnumber.value=      op right; return 0
@@ -431,6 +415,7 @@ typedef struct VariantElement {
 } VariantElement;
 
 typedef struct VariantList { VariantElement *first, *last; } VariantList;
+#define EmptyVariantList { 0, 0 }
 
 
 static void copyVariant(Variant* dest, const Variant* sour) {
@@ -463,12 +448,14 @@ static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, i
     addVariantElementToList(list, element);
 }
 
+/*
 static void addVariantToListKS(VariantList* list, const Variant* variantToAdd, const utf8* stringKey) {
     VariantElement* element = stalloc(sizeof(VariantElement));
     element->key.string = stringKey;
     copyVariant(&element->variant, variantToAdd);
     addVariantElementToList(list, element);
 }
+*/
 
 /*=================================================================================================================*/
 #pragma mark - > READING ELEMENTS FROM THE TEXT buffer
@@ -691,34 +678,20 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
 /*=================================================================================================================*/
 #pragma mark - > DEFERRED OUTPUT
 
-typedef struct DeferredOutput {
-    int     userValue;
-    Variant variant;
-} DeferredOutput;
+/* ATTENTION!: this structure must have the same format that `VariantElement` */
+typedef struct DeferredOutput { Variant variant; int userValue; } DeferredOutput;
+
+static VariantList deferredOutputList = EmptyVariantList;
 
 static void addDeferredOutput(int userValue, const Variant* variant) {
-    utf8 str[256];
-    switch (variant->type) {
-        case TYPE_EMPTY:    printf("<empty>"); break;
-        case TYPE_UNSOLVED: printf("<..?..>"); break;
-        case TYPE_INUMBER:  printf("%d",variant->inumber.value); break;
-        case TYPE_FNUMBER:  printf("%f",variant->fnumber.value); break;
-        case TYPE_ASTRING:
-        case TYPE_CSTRING:
-            variantToString(variant,str,sizeof(str));
-            printf("%s",str);
-            break;
-    }
-    printf(userValue ? "\n" : " ");
+    addVariantToListKI(&deferredOutputList, variant, userValue);
+}
+static const DeferredOutput* getFirstDeferredOutput(void) {
+    return (const DeferredOutput*)deferredOutputList.first;
 }
 
-static DeferredOutput* getFirstDeferredOutput(void) {
-    return NULL;
-}
-
-static DeferredOutput* getNextDeferredOutput(DeferredOutput* output) {
-    assert( output!=NULL );
-    return NULL;
+static const DeferredOutput* getNextDeferredOutput(const DeferredOutput* output) {
+    return (DeferredOutput*) ((const VariantElement*)output)->next;
 }
 
 /*=================================================================================================================*/
@@ -812,29 +785,23 @@ static Bool evaluateFile(const utf8* filePath) {
     return success ? TRUE : FALSE;
 }
 
-
-/*=================================================================================================================*/
-#pragma mark - > MAIN
-
-/*
 static void printDeferredOutput() {
-    int line=1; DeferredOutput* output;
+    utf8 str[256]; const DeferredOutput* output;
     for ( output=getFirstDeferredOutput(); output; output=getNextDeferredOutput(output) ) {
-        while (line<output->user) { printf("\n"); ++line; }
-        switch (output->variant->type) {
+        switch (output->variant.type) {
             case TYPE_EMPTY:    printf("<empty>"); break;
             case TYPE_UNSOLVED: printf("<..?..>"); break;
-            case TYPE_INUMBER:  printf("%d",output->variant->inumber.value); break;
-            case TYPE_FNUMBER:  printf("%f",output->variant->fnumber.value); break;
+            case TYPE_INUMBER:  printf("%d",output->variant.inumber.value); break;
+            case TYPE_FNUMBER:  printf("%f",output->variant.fnumber.value); break;
             case TYPE_ASTRING:
             case TYPE_CSTRING:
-                variantToString(variant,str,sizeof(str));
+                variantToString(&output->variant,str,sizeof(str));
                 printf("%s",str);
                 break;
         }
+        printf(output->userValue==1 ? "\n" : " ");
     }
 }
-*/
 
 
 /*=================================================================================================================*/
@@ -842,7 +809,6 @@ static void printDeferredOutput() {
 
 #define isOption(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
 #define MAX_FILES 256  /* maximum number of files to evaluate */
-
 
 int main(int argc, char *argv[]) {
     int i;
@@ -875,12 +841,7 @@ int main(int argc, char *argv[]) {
     if (numberOfFiles>0) {
         init();
         for (i=0; i<numberOfFiles; ++i) { evaluateFile(filePaths[i]); }
-        if (!printErrorMessages()) {
-            DeferredOutput* output = getFirstDeferredOutput();
-            while (output) {
-                output = getNextDeferredOutput(output);
-            }
-        }
+        if (!printErrorMessages()) { printDeferredOutput(); }
     }
     stallocFreeAll();
     return success ? 0 : -1;
