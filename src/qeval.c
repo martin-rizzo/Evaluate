@@ -37,15 +37,16 @@
 #define VERSION   "0.1"
 #define COPYRIGHT "Copyright (c) 2020 Martin Rizzo"
 
-#define MIN_FILE_SIZE      (0)           /* < minimum size for loadable files (in bytes)   */
-#define MAX_FILE_SIZE      (1024L*1024L) /* < maximum size for loadable files (in bytes)   */
-#define MAX_ERROR_COUNT    (32)          /* < maximum number of errors able to be reported */
-#define MAX_NAME_LEN       (63)          /* < maximum length for names of vars (in bytes)  */
-#define MAX_ERRSTR_LEN     (63)          /* < ... */
-#define MAX_ERRMSG_LEN     (63)          /* < ... */
-#define CALC_STACK_SIZE    (256)         /* < the calculator's stack size in number of elements */
-#define STALLOC_CHUNK_SIZE (64*1024)     /* < size of each chunk of memory allocated by autoalloc */
-#define MIN_PRECEDENCE     (1)           /* < the minimum valid operator predecence */
+#define MIN_FILE_SIZE       (0)           /* < minimum size for loadable files (in bytes)            */
+#define MAX_FILE_SIZE       (1024L*1024L) /* < maximum size for loadable files (in bytes)            */
+#define MAX_ERROR_COUNT     (32)          /* < maximum number of errors able to be reported          */
+#define MAX_NAME_LEN        (63)          /* < maximum length for names of vars (in bytes)           */
+#define MAX_ERRMSG_LEN      (63)          /* < maximum length for error messages (in bytes)          */
+#define MAX_ERRSTR_LEN      (63)          /* < maximum length for the optional error text (in bytes) */
+#define CALC_STACK_SIZE     (256)         /* < the calculator's stack size in number of elements     */
+#define STALLOC_CHUNK_SIZE  (64*1024)     /* < size of each chunk of memory allocated by autoalloc   */
+#define MIN_PRECEDENCE      (1)           /* < the minimum valid operator predecence                 */
+#define NUMBER_OF_MAP_SLOTS (77)          /* < number of slots used in the hashmap                   */
 
 
 
@@ -409,13 +410,20 @@ static int calcOperation(Variant* v, const Variant* left, const Operator *operat
 /*=================================================================================================================*/
 #pragma mark - > VARIANT CONTAINERS
 
+#define calculateHash(hash,ptr,string) \
+    hash=5381; ptr=(unsigned char*)string; while (*ptr) { hash = ((hash<<5)+hash) ^ *ptr++; }
+
+#define EmptyVariantList { 0, 0 }
+#define EmptyVariantMap  { 0 }
+
 typedef struct VariantElement {
     Variant variant; union { int integer; const utf8* string; } key;
     struct VariantElement* next;
 } VariantElement;
 
 typedef struct VariantList { VariantElement *first, *last; } VariantList;
-#define EmptyVariantList { 0, 0 }
+typedef struct VariantList VariantMapSlot;
+typedef struct VariantMap  { VariantMapSlot* slots; } VariantMap;
 
 
 static void copyVariant(Variant* dest, const Variant* sour) {
@@ -448,14 +456,40 @@ static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, i
     addVariantElementToList(list, element);
 }
 
-/*
 static void addVariantToListKS(VariantList* list, const Variant* variantToAdd, const utf8* stringKey) {
-    VariantElement* element = stalloc(sizeof(VariantElement));
-    element->key.string = stringKey;
+    VariantElement* element; int sizeofStringKey; utf8* copyofStringKey;
+    assert( list!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
+    
+    sizeofStringKey = (int)strlen(stringKey)+1;
+    copyofStringKey = stalloc(sizeofStringKey);
+    memcpy(copyofStringKey, stringKey, sizeofStringKey);
+    
+    element             = stalloc(sizeof(VariantElement));
+    element->key.string = copyofStringKey;
     copyVariant(&element->variant, variantToAdd);
     addVariantElementToList(list, element);
 }
-*/
+
+static void addVariantToMap(VariantMap* map, Variant* variantToAdd, const utf8* stringKey) {
+    unsigned hash; unsigned char* tmp;
+    assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
+    calculateHash(hash,tmp,stringKey);
+    if (map->slots==NULL) { map->slots=stalloc(NUMBER_OF_MAP_SLOTS*sizeof(VariantMapSlot)); }
+    addVariantToListKS(&map->slots[hash%NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
+}
+
+static const Variant* findVariantInMap(VariantMap* map, const utf8* stringKey) {
+    unsigned hash; VariantElement* element; unsigned char* tmp;
+    assert( map!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
+    calculateHash(hash,tmp,stringKey);
+    element = map->slots ? map->slots[hash%NUMBER_OF_MAP_SLOTS].first : NULL;
+    while (element) {
+        if ( 0==strcmp(element->key.string,stringKey) ) { return &element->variant; }
+        element = element->next;
+    }
+    return NULL;
+}
+
 
 /*=================================================================================================================*/
 #pragma mark - > READING ELEMENTS FROM THE TEXT buffer
@@ -575,6 +609,8 @@ static Bool readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf8 *
 /*=================================================================================================================*/
 #pragma mark - > EXPRESION EVALUATOR
 
+static VariantMap theNameMap = EmptyVariantMap;
+
 static Variant theVariant;
 struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
 struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
@@ -594,7 +630,7 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 
 static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start;
-    const Operator* op; Variant variant, tmp;
+    const Operator* op; Variant variant, tmp; const Variant *variantRef;
     utf8 name[MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
@@ -653,8 +689,14 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
             else if ( readINumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readFNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
-                
-                assert( FALSE );
+                variantRef = findVariantInMap(&theNameMap, name);
+                if (variantRef==NULL) {
+                    assert( theVariant.type == TYPE_UNSOLVED );
+                    while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
+                    theVariant.unsolved.end = (*out_end) = ptr;
+                    return &theVariant;
+                }
+                cPUSH(vStack, (*variantRef));
             }
             else { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
             skipblankspaces(ptr);
@@ -730,7 +772,7 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
         variant = evaluateExpression(ptr+1,&ptr);
-        /* addConstant(name,variant); */
+        addVariantToMap(&theNameMap, variant, name);
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {

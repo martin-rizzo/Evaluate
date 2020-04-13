@@ -29,6 +29,7 @@
 		5B25939B243EAA96004CBA4E /* 03_MATH.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = 03_MATH.txt; sourceTree = "<group>"; };
 		5BDF48DC243E221F0089248E /* qeval.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = qeval.c; sourceTree = "<group>"; };
 		5BDF48DD243E221F0089248E /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
+		5BE91C792445244D00DFDF66 /* 04_VARS.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = 04_VARS.txt; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -65,6 +66,7 @@
 				5B25939A243E2FE4004CBA4E /* 01_STRINGS.txt */,
 				5B259399243E2FE4004CBA4E /* 02_INTEGERS.txt */,
 				5B25939B243EAA96004CBA4E /* 03_MATH.txt */,
+				5BE91C792445244D00DFDF66 /* 04_VARS.txt */,
 			);
 			path = examples;
 			sourceTree = "<group>";

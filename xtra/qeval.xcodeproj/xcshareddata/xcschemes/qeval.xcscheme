@@ -62,6 +62,10 @@
          </CommandLineArgument>
          <CommandLineArgument
             argument = "../xtra/examples/03_MATH.txt"
+            isEnabled = "NO">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "../xtra/examples/04_VARS.txt"
             isEnabled = "YES">
          </CommandLineArgument>
       </CommandLineArguments>
