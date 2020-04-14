@@ -57,19 +57,15 @@
             isEnabled = "NO">
          </CommandLineArgument>
          <CommandLineArgument
-            argument = "../xtra/examples/02_INTEGERS.txt"
+            argument = "../xtra/examples/02_NUMBERS.txt"
             isEnabled = "YES">
          </CommandLineArgument>
          <CommandLineArgument
-            argument = "../xtra/examples/03_FLOATS.txt"
-            isEnabled = "YES">
-         </CommandLineArgument>
-         <CommandLineArgument
-            argument = "../xtra/examples/04_MATH.txt"
+            argument = "../xtra/examples/03_MATH.txt"
             isEnabled = "NO">
          </CommandLineArgument>
          <CommandLineArgument
-            argument = "../xtra/examples/05_VARS.txt"
+            argument = "../xtra/examples/04_VARS.txt"
             isEnabled = "NO">
          </CommandLineArgument>
       </CommandLineArguments>
