@@ -519,7 +519,7 @@ static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr)
         case CH_BINPREFIX:      if (isbin(ptr[1])) { base= 2; ++ptr; } break; /* < bin type defined with "%" */
     }
     /* find the last character */
-    last=ptr; while ( isliteral(*last) ) { ++last; } --last;
+    last=ptr; while ( isliteral(*last) || *last=='.' ) { ++last; } --last;
     
     /* try to find the base of a possible number (if it wasn't already found) */
     if ( base==0 && isdigit(*ptr) ) {
@@ -536,9 +536,8 @@ static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr)
     }
     if ( base==0 ) { return FALSE; }
     /* calculate the literal value using the found base */
-    value=0; while ( ptr<=last )
+    value=0; while ( ptr<=last && *ptr!='.' )
     { digit=hexvalue(*ptr++); if (0<=digit && digit<base) { value*=base; value+=digit; } }
-    while ( isliteral(*ptr) ) { ++ptr; }
     
     /* if the number contains a dot (.) then process it as a floating-point */
     if (*ptr=='.') {
@@ -555,6 +554,7 @@ static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr)
         out_v->inumber.value = value;
     }
     /* everything ok!, return end pointer & value */
+    while ( isliteral(*ptr) ) { ++ptr; }
     if (out_endptr) { (*out_endptr)=ptr; }
     return TRUE;
 }

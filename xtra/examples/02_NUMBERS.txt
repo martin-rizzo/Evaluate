@@ -31,7 +31,12 @@ PRINT ""
 
 PRINT "TESTING FLOATING-POINT NUMBERS"
 PRINT "------------------------------"
+PRINT "    5.       =",  5.
+PRINT "    .2       =",  .2
 PRINT "   0.2       =", 0.2
+PRINT "   0.2d      =", 0.2d
+PRINT "  0d9.2      =", 0d9.2
+PRINT "   0d.2      =",  0d.2
 PRINT "   0.1       =", 0.1
 PRINT "   0.01      =", 0.01
 PRINT "   0.001     =", 0.001
