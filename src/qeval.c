@@ -278,12 +278,12 @@ static const Operator OpSafeGuard   = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
 typedef enum   VariantType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_ASTRING, TYPE_CSTRING, TYPE_INUMBER, TYPE_FNUMBER } VariantType;
 typedef union  Variant {
     VariantType type;
-    struct { VariantType type;                          } empty;     /* < empty data          */
-    struct { VariantType type; int   value;             } inumber;   /* < integer number      */
-    struct { VariantType type; float value;             } fnumber;   /* < float point number  */
-    struct { VariantType type; const utf8 *begin, *end; } astring;   /* < assembler string    */
-    struct { VariantType type; const utf8 *begin, *end; } cstring;   /* < C string            */
-    struct { VariantType type; const utf8 *begin, *end; } unsolved;  /* < unsolved expression */
+    struct { VariantType type;                          } empty;     /* < empty data             */
+    struct { VariantType type; int   value;             } inumber;   /* < integer number         */
+    struct { VariantType type; float value;             } fnumber;   /* < floating-point number  */
+    struct { VariantType type; const utf8 *begin, *end; } astring;   /* < assembler string       */
+    struct { VariantType type; const utf8 *begin, *end; } cstring;   /* < C string               */
+    struct { VariantType type; const utf8 *begin, *end; } unsolved;  /* < unsolved expression    */
 } Variant;
 
 static const Variant EmptyVariant = { TYPE_EMPTY };
@@ -540,6 +540,9 @@ static Bool readINumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr
     { digit=hexvalue(*ptr++); if (0<=digit && digit<base) { value*=base; value+=digit; } }
     while ( isliteral(*ptr) ) { ++ptr; }
     
+    /* ATTENTION!: test if the number is a floating-point */
+    if (*ptr=='.') { return FALSE; }
+    
     /* everything ok!, return end pointer & value */
     if (out_endptr) { (*out_endptr)=ptr; }
     out_v->inumber.type  = TYPE_INUMBER;
@@ -548,15 +551,26 @@ static Bool readINumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr
 }
 
 /**
- * Try to read the value of a float point literal
+ * Try to read the value of a floating-point literal
  * @param[out]  out_v       (output) Pointer to the variant where the read value will be stored
  * @param[in]   ptr         Pointer to the begin of the string containing the value to read
  * @param[out]  out_endptr  (optional output) Ref to the pointer where the end of reading will be stored, can be NULL
  * @returns
- *    FALSE when no value can be read because the string format does not match with a float point number
+ *    FALSE when no value can be read because the string format does not match with a floating-point number
  */
 static Bool readFNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr) {
-    return FALSE;
+    
+    double value=0, divisor=1;
+    while ('0'<=*ptr && *ptr<='9') { value = value * 10.0 + (*ptr++ - '0'); }
+    if (*ptr=='.') { ++ptr; } else { return FALSE; }
+    while ('0'<=*ptr && *ptr<='9') { value = value * 10.0 + (*ptr++ - '0'); divisor*=10.0; }
+    if (*ptr=='.' || divisor==0.0 ) { return FALSE; }
+    
+    /* everything ok!, return end pointer & value */
+    if (out_endptr) { (*out_endptr)=ptr; }
+    out_v->fnumber.type  = TYPE_FNUMBER;
+    out_v->fnumber.value = (float)(value/divisor);
+    return TRUE;
 }
 
 /**
@@ -834,7 +848,7 @@ static void printDeferredOutput() {
             case TYPE_EMPTY:    printf("<empty>"); break;
             case TYPE_UNSOLVED: printf("<..?..>"); break;
             case TYPE_INUMBER:  printf("%d",output->variant.inumber.value); break;
-            case TYPE_FNUMBER:  printf("%f",output->variant.fnumber.value); break;
+            case TYPE_FNUMBER:  printf("%g",output->variant.fnumber.value); break;
             case TYPE_ASTRING:
             case TYPE_CSTRING:
                 variantToString(&output->variant,str,sizeof(str));
