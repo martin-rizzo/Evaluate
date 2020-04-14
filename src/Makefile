@@ -1,12 +1,13 @@
 
 
-CC = cc
-RM = rm -f
-BIN_DIR = ../bin
-EXAMPLE = ../xtra/examples/01_STRINGS.txt
+#CC = cc
+RM       = rm -f
+BIN_DIR  = ../bin
+EX_DIR   = ../xtra/examples
+EXAMPLES = $(EX_DIR)/01_STRINGS.txt $(EX_DIR)/02_INTEGERS.txt $(EX_DIR)/03_MATH.txt $(EX_DIR)/04_VARS.txt
 
 TARGET_RELEASE = $(BIN_DIR)/qeval
-TARGET_DEBUG   = $(BIN_DIR)/qeval-dbg
+TARGET_DEBUG   = $(BIN_DIR)/qeval_d
 SRC            = qeval.c
 
 ## compiler flags ##
@@ -45,7 +46,7 @@ $(TARGET): $(SRC)
 # TEST
 #
 test: $(TARGET_DEBUG)
-	./$(TARGET_DEBUG) $(EXAMPLE)
+	./$(TARGET_DEBUG) $(EXAMPLES)
 
 
 #-----------------------------------------------
