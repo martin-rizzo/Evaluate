@@ -502,8 +502,8 @@ static const Variant* findVariantInMap(VariantMap* map, const utf8* stringKey) {
  * @returns
  *    FALSE when no value can be read because the string format does not match with an integer number
  */
-static Bool readINumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr) {
-    const utf8 *last, *type; int base, value, digit;
+static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr) {
+    const utf8 *last, *type; int base, value, digit; double fvalue, fdivisor;
     assert( out_v!=NULL && (ptr!=NULL && *ptr!=CH_PARAM_SEP && *ptr!='\0') );
     
     if ( !isliteral(*ptr) ) { return FALSE; }
@@ -540,36 +540,22 @@ static Bool readINumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr
     { digit=hexvalue(*ptr++); if (0<=digit && digit<base) { value*=base; value+=digit; } }
     while ( isliteral(*ptr) ) { ++ptr; }
     
-    /* ATTENTION!: test if the number is a floating-point */
-    if (*ptr=='.') { return FALSE; }
-    
+    /* if the number contains a dot (.) then process it as a floating-point */
+    if (*ptr=='.') {
+        if (base!=10) { return FALSE; }
+        fvalue=(double)value; fdivisor=1.0;
+        ++ptr; while ('0'<=*ptr && *ptr<='9') { fvalue = fvalue * 10.0 + (*ptr++ - '0'); fdivisor*=10.0; }
+        if (*ptr=='.') { return FALSE; }
+        out_v->fnumber.type  = TYPE_FNUMBER;
+        out_v->fnumber.value = (float)(fvalue/fdivisor);
+    }
+    /* the number does not contain a dot (.), it's a integer */
+    else {
+        out_v->inumber.type  = TYPE_INUMBER;
+        out_v->inumber.value = value;
+    }
     /* everything ok!, return end pointer & value */
     if (out_endptr) { (*out_endptr)=ptr; }
-    out_v->inumber.type  = TYPE_INUMBER;
-    out_v->inumber.value = value;
-    return TRUE;
-}
-
-/**
- * Try to read the value of a floating-point literal
- * @param[out]  out_v       (output) Pointer to the variant where the read value will be stored
- * @param[in]   ptr         Pointer to the begin of the string containing the value to read
- * @param[out]  out_endptr  (optional output) Ref to the pointer where the end of reading will be stored, can be NULL
- * @returns
- *    FALSE when no value can be read because the string format does not match with a floating-point number
- */
-static Bool readFNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr) {
-    
-    double value=0, divisor=1;
-    while ('0'<=*ptr && *ptr<='9') { value = value * 10.0 + (*ptr++ - '0'); }
-    if (*ptr=='.') { ++ptr; } else { return FALSE; }
-    while ('0'<=*ptr && *ptr<='9') { value = value * 10.0 + (*ptr++ - '0'); divisor*=10.0; }
-    if (*ptr=='.' || divisor==0.0 ) { return FALSE; }
-    
-    /* everything ok!, return end pointer & value */
-    if (out_endptr) { (*out_endptr)=ptr; }
-    out_v->fnumber.type  = TYPE_FNUMBER;
-    out_v->fnumber.value = (float)(value/divisor);
     return TRUE;
 }
 
@@ -700,8 +686,7 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
                 cPUSH(opStack, op); opPushed=TRUE;
                 
             }
-            else if ( readINumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
-            else if ( readFNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
+            else if ( readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
                 variantRef = findVariantInMap(&theNameMap, name);
                 if (variantRef==NULL) {
