@@ -58,15 +58,19 @@
          </CommandLineArgument>
          <CommandLineArgument
             argument = "../xtra/examples/02_NUMBERS.txt"
-            isEnabled = "YES">
+            isEnabled = "NO">
          </CommandLineArgument>
          <CommandLineArgument
             argument = "../xtra/examples/03_MATH.txt"
-            isEnabled = "YES">
+            isEnabled = "NO">
          </CommandLineArgument>
          <CommandLineArgument
             argument = "../xtra/examples/04_VARS.txt"
             isEnabled = "NO">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "../xtra/examples/05_ERRORS.txt"
+            isEnabled = "YES">
          </CommandLineArgument>
       </CommandLineArguments>
    </LaunchAction>

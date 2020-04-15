@@ -72,14 +72,6 @@ typedef enum ErrorID_ {
 } ErrorID;
 
 
-
-typedef struct Error { ErrorID id; const utf8 *filename, *str; int line; } Error;
-
-
-
-
-
-
 /*=================================================================================================================*/
 #pragma mark - > HELPER FUNCTIONS
 
@@ -105,7 +97,8 @@ static int octvalue   (int ch) { return INRANGE(ch,'0','7') ? ch-'0' : -1; }
 #define skipendofline(ptr) (ptr[0]=='\n' && ptr[1]=='\r') || (ptr[0]=='\r' && ptr[1]=='\n') ? ptr+=2 : ++ptr;
 #define skipblankspaces(ptr) while ( isblank(*ptr) ) { ++ptr; }
 
-static const utf8 * stralloc(const utf8 *str, int maxlen) {
+/*
+static const utf8 * strdup2(const utf8 *str, int maxlen) {
     utf8 *dest; size_t len;
     if (!str) { return NULL; }
     len=strlen(str); if (maxlen>0 && len>maxlen) { len=maxlen; }
@@ -123,6 +116,7 @@ static const utf8 * strreplace(utf8 *buffer, const utf8 *message, int charToRepl
     }
     *dest='\0'; return buffer;
 }
+*/
 
 
 /*=================================================================================================================*/
@@ -151,6 +145,17 @@ static void* stalloc(int size) {
     return ptr;
 }
 
+static const utf8* stalloc_strreplace(const utf8* message, int charToReplace, const utf8* replacement) {
+    utf8 *buffer, *dest; const utf8 *ptr=message;
+    assert( message!=NULL );
+    
+    dest = buffer = stalloc( (int)strlen(message) + (replacement!=NULL ? (int)strlen(replacement) : 0) + 1 );
+    ptr=message; while (*ptr!='\0' && *ptr!=charToReplace) { *dest++=*ptr++; }
+    if (*ptr==charToReplace && replacement!=NULL) { ++ptr; while (*replacement!='\0') { *dest++=*replacement++; } }
+    while (*ptr!='\0') { *dest++=*ptr++; }
+    *dest='\0'; return buffer;
+}
+
 /**
  * Deallocates all memory that previously was allocated with 'stalloc(..)'
  */
@@ -164,70 +169,89 @@ static void stallocFreeAll() {
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
 
-static struct Globals {
-    const utf8* curFilePath;
-    int         curLineNumber;
-    Error       errors[MAX_ERROR_COUNT];
-    int         errorCount;
-} g;
-
 #ifdef NDEBUG
-#    define DLOG(x)
+#    define QLOG(x)
 #else
-#    define DLOG(x) printf x; printf("\n")
+#    define QLOG(x) printf x; printf("\n")
 #endif
+
+
+typedef struct QErrorLine { const utf8* permaPath; int number; struct QErrorLine* prev; } QErrorLine;
+typedef struct QError { ErrorID id; const utf8* str; QErrorLine line; struct QError* next; } QError;
+
+static QErrorLine* theCurErrorLine = NULL;
+QError*            theFirstError   = NULL;
 
 /**
  * Global var that indicates whether the program is being successfully executed.
  * It is TRUE while no error is reported.
  */
-#define success (g.errorCount==0)
+#define success (theFirstError==NULL)
 
 /**
  * Reports a error
  * @param errorID  The error identifier, ex: ERR_CANNOT_READ_FILE
  * @param str      The optional text attached to the error reported (it can be NULL)
  */
-static Bool error(ErrorID errorID, const utf8 *str) {
-    Error *error; if (g.errorCount<MAX_ERROR_COUNT) {
-        error = &g.errors[g.errorCount++];
-        error->id=errorID;
-        error->filename=stralloc(g.curFilePath,-1);
-        error->line=g.curLineNumber;
-        error->str=stralloc(str,MAX_ERRSTR_LEN);
+static Bool qerror(ErrorID errorID, const utf8 *str) {
+    const utf8* message; QError* newError;
+    switch (errorID) {
+        case ERR_NO_ERROR:             message = "SUCCESS"; break;
+        case ERR_FILE_NOT_FOUND:       message = "file not found";    break;
+        case ERR_FILE_TOO_LARGE:       message = "the file '$' is too large"; break;
+        case ERR_NOT_ENOUGH_MEMORY:    message = "not enough memory"; break;
+        case ERR_INT8_OUT_OF_RANGE:    message = "the 8-bit value is out of range"; break;
+        case ERR_INT16_OUT_OF_RANGE:   message = "the 16-bit value is out of range"; break;
+        case ERR_BITNUM_OUT_OF_RANGE:  message = "the bit number is out of range (valid range is: 0-7)"; break;
+        case ERR_INVALID_EXPRESSION:   message = "invalid expression"; break;
+        case ERR_INVALID_IMODE:        message = "invalid interruption mode"; break;
+        case ERR_UNEXPECTED_PTHESIS:   message = "unexpected ')' (closing parenthesis)"; break;
+        case ERR_TOO_MANY_OPEN_PTHESES:message = "too many open parentheses"; break;
+        case ERR_INVALID_RST_ADDRESS:  message = "invalid RST address"; break;
+        case ERR_DISP_MUST_BE_ZERO:    message = "no displacement can be added to the index register"; break;
+        case ERR_DISP_OUT_OF_RANGE:    message = "the displacement is out of range"; break;
+        case ERR_UNKNOWN_PARAM:        message = "unknown parameter"; break;
+        default:                       message = "unknown error";     break;
     }
+    newError = stalloc(sizeof(QError));
+    newError->id             = errorID;
+    newError->line.permaPath = theCurErrorLine ? theCurErrorLine->permaPath : 0;
+    newError->line.number    = theCurErrorLine ? theCurErrorLine->number    : 0;
+    newError->str            = stalloc_strreplace(message,'$',str);
+    newError->next           = NULL;
+    theFirstError = theFirstError ? (theFirstError->next=newError) : newError;
     return (errorID==ERR_NO_ERROR);
 }
 
-static Bool printErrorMessages(void) {
-    const utf8 *message; Error *error=g.errors; int count=g.errorCount;
-    utf8 buffer[ (MAX_ERRMSG_LEN+1)+(MAX_ERRSTR_LEN+1) ];
+static void qerrorBeginFile(const utf8* filePath) {
+    QErrorLine* newErrorLine;
+    assert(filePath!=NULL);
+    newErrorLine = malloc(sizeof(QErrorLine));
+    newErrorLine->permaPath = stalloc_strreplace(filePath,0,0);
+    newErrorLine->number    = 0;
+    newErrorLine->prev      = theCurErrorLine;
+    theCurErrorLine = newErrorLine;
+}
 
-    while (--count>=0) {
-        switch (error->id) {
-            case ERR_NO_ERROR:             message = "SUCCESS"; break;
-            case ERR_FILE_NOT_FOUND:       message = "file not found";    break;
-            case ERR_FILE_TOO_LARGE:       message = "the file '$' is too large"; break;
-            case ERR_NOT_ENOUGH_MEMORY:    message = "not enough memory"; break;
-            case ERR_INT8_OUT_OF_RANGE:    message = "the 8-bit value is out of range"; break;
-            case ERR_INT16_OUT_OF_RANGE:   message = "the 16-bit value is out of range"; break;
-            case ERR_BITNUM_OUT_OF_RANGE:  message = "the bit number is out of range (valid range is: 0-7)"; break;
-            case ERR_INVALID_EXPRESSION:   message = "invalid expression"; break;
-            case ERR_INVALID_IMODE:        message = "invalid interruption mode"; break;
-            case ERR_UNEXPECTED_PTHESIS:   message = "unexpected ')' (closing parenthesis)"; break;
-            case ERR_TOO_MANY_OPEN_PTHESES:message = "too many open parentheses"; break;
-            case ERR_INVALID_RST_ADDRESS:  message = "invalid RST address"; break;
-            case ERR_DISP_MUST_BE_ZERO:    message = "no displacement can be added to the index register"; break;
-            case ERR_DISP_OUT_OF_RANGE:    message = "the displacement is out of range"; break;
-            case ERR_UNKNOWN_PARAM:        message = "unknown parameter"; break;
-            default:                       message = "unknown error";     break;
+static void qerrorEndFile(const utf8* filePath) {
+    QErrorLine* prevErrorLine;
+    assert( filePath!=NULL );
+    assert( theCurErrorLine!=NULL && strcmp(theCurErrorLine->permaPath,filePath)==0 );
+    prevErrorLine = theCurErrorLine->prev;
+    free(theCurErrorLine); theCurErrorLine=prevErrorLine;
+}
+
+#define qerrorSetLineNumber(x) if(theCurErrorLine) { theCurErrorLine->number = (x); }
+
+static Bool printErrorMessages(void) {
+    QError* error; const int column=1;
+    for (error=theFirstError; error; error=error->next) {
+        if (error->line.permaPath!=NULL && error->line.number>0) {
+            printf("%s:%d:%d: ", error->line.permaPath, error->line.number, column);
         }
-        message=strreplace(buffer,message,'$',error->str);
-        if (error->line) { printf("%s:%d: %s %s\n", error->filename, error->line, "error:", message); }
-        else             { printf("%s %s\n", "error:", message); }
-        ++error;
+        printf("%s %s\n", "error:", error->str);
     }
-    return (g.errorCount>0);
+    return (theFirstError!=NULL);
 }
 
 /*=================================================================================================================*/
@@ -450,7 +474,9 @@ static void addVariantElementToList(VariantList* list, VariantElement* elementTo
 }
 
 static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, int integerKey) {
-    VariantElement* element = stalloc(sizeof(VariantElement));
+    VariantElement* element;
+    assert( list!=NULL && variantToAdd!=NULL );
+    element = stalloc(sizeof(VariantElement));
     element->key.integer = integerKey;
     copyVariant(&element->variant, variantToAdd);
     addVariantElementToList(list, element);
@@ -628,14 +654,16 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 #define cWHILE_PRECEDENCE(cond, f, tmp, oStack, vStack) \
     while (cPEEK(oStack)->preced cond) { cEXECUTE(f,tmp,oStack,vStack); }
 
+
 static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
-    const utf8 *ptr = start;
+    const utf8 *ptr = start; int error;
     const Operator* op; Variant variant, tmp; const Variant *variantRef;
     utf8 name[MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
 
-    theVariant.unsolved.type  = TYPE_UNSOLVED;
+    error = 0;
+    theVariant.type = TYPE_EMPTY;
     theVariant.unsolved.begin = ptr;
     skipblankspaces(ptr);
     
@@ -678,7 +706,7 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
             }
             else if (*ptr==')') {
                 cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
-                if (cPOP(opStack)!=&OpParenthesis) { error(ERR_UNEXPECTED_PTHESIS,0); return NULL; }
+                if (cPOP(opStack)!=&OpParenthesis) { qerror(error=ERR_UNEXPECTED_PTHESIS,0); }
                 ++ptr;
             }
             else if ( readOperator(&op,precededByNumber,ptr,&ptr) ) {
@@ -692,26 +720,25 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
                 if (variantRef==NULL) {
                     assert( theVariant.type == TYPE_UNSOLVED );
                     while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
-                    theVariant.unsolved.end = (*out_end) = ptr;
+                    theVariant.unsolved.type = TYPE_UNSOLVED;
+                    theVariant.unsolved.end  = (*out_end) = ptr;
                     return &theVariant;
                 }
                 cPUSH(vStack, (*variantRef));
             }
-            else { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
+            else { qerror(error=ERR_INVALID_EXPRESSION,0); }
             skipblankspaces(ptr);
         }
 
         /* process any pending operator before return */
-        cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
-        /* while ( cPEEK(opStack)!=&OpSafeGuard ) { cEXECUTE(calcOperation,opStack,vStack); } */
-        if ( cPEEK(opStack)==&OpParenthesis) { error(ERR_TOO_MANY_OPEN_PTHESES,0); return NULL; }
-        if ( vStack.i!=3 || opStack.i!=2 ) { error(ERR_INVALID_EXPRESSION,0); return &theVariant; }
-        theVariant = cPOP(vStack);
+        if (!error) { cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack); }
+        if (!error && cPEEK(opStack)==&OpParenthesis) { qerror(error=ERR_TOO_MANY_OPEN_PTHESES,0); }
+        if (!error && (vStack.i!=3 || opStack.i!=2) ) { qerror(error=ERR_INVALID_EXPRESSION,0); }
+        if (!error) { theVariant = cPOP(vStack); }
     }
 
     while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
     (*out_end) = ptr;
-    
     return &theVariant;
 }
 
@@ -725,6 +752,7 @@ typedef struct DeferredOutput { Variant variant; int userValue; } DeferredOutput
 static VariantList deferredOutputList = EmptyVariantList;
 
 static void addDeferredOutput(int userValue, const Variant* variant) {
+    assert( variant!=NULL );
     addVariantToListKI(&deferredOutputList, variant, userValue);
 }
 static const DeferredOutput* getFirstDeferredOutput(void) {
@@ -739,19 +767,18 @@ static const DeferredOutput* getNextDeferredOutput(const DeferredOutput* output)
 #pragma mark - > MAIN CODE
 
 /*
+    Bool qerror(ErrorID,str);
+    void qerrorBeginFile(filePath);
+    void qerrorEndFile();
+    void qerrorSetLineNumber(lineNumber);
+ 
+ 
  qeval addConstant(..)
  qeval evaluateExpression(..)
  qeval addDeferredOutput(..)
  qeval solveDeferredOutputs(..)
  qeval getNextDeferredOutput(..)
  */
-
-static void init(void) {
-    g.curFilePath   = NULL;
-    g.curLineNumber = 0;
-    g.errorCount    = 0;
-}
-
 
 
 static void printDeferredOutput() {

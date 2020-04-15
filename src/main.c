@@ -39,24 +39,24 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
     return TRUE;
 }
 
+
 static Bool evaluateFile(const utf8* filePath) {
-    FILE* file=NULL; long fileSize=0; utf8 *fileBuffer=NULL; const utf8 *ptr;
-    const utf8* prevFilePath; int prevLineNumber;
+    FILE* file=NULL; long fileSize=0; utf8 *fileBuffer=NULL; const utf8 *ptr; int lineNumber;
     assert( filePath!=NULL );
     
     /* try to load the entire file to a buffer */
     if (success) {
-        file=fopen(filePath,"rb"); if (!file) { error(ERR_FILE_NOT_FOUND,filePath); }
+        file=fopen(filePath,"rb"); if (!file) { qerror(ERR_FILE_NOT_FOUND,filePath); }
     }
     if (success) {
         fseek(file,0L,SEEK_END); fileSize=ftell(file); rewind(file);
-        if ( fileSize>MAX_FILE_SIZE ) { error(ERR_FILE_TOO_LARGE,filePath); }
+        if ( fileSize>MAX_FILE_SIZE ) { qerror(ERR_FILE_TOO_LARGE,filePath); }
     }
     if (success) {
-        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { error(ERR_NOT_ENOUGH_MEMORY,0); }
+        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { qerror(ERR_NOT_ENOUGH_MEMORY,0); }
     }
     if (success) {
-        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { error(ERR_CANNOT_READ_FILE,filePath); }
+        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { qerror(ERR_CANNOT_READ_FILE,filePath); }
         else { fileBuffer[fileSize]=CH_ENDFILE; }
     }
     if (file) { fclose(file); }
@@ -64,17 +64,12 @@ static Bool evaluateFile(const utf8* filePath) {
     /* if the file is loaded in buffer    */
     /* then evaluate all lines one by one */
     if (success) {
-        /* q_beginFile(filePath); */
-        prevFilePath   = g.curFilePath   ; g.curFilePath   = filePath;
-        prevLineNumber = g.curLineNumber ; g.curLineNumber = 1;
-        ptr = fileBuffer; while ( *ptr!=CH_ENDFILE && success ) {
-            /* q_evaluateTextLine(++curLineNumber,ptr,&ptr); */
+        qerrorBeginFile(filePath);
+        lineNumber=0; ptr=fileBuffer; while ( *ptr!=CH_ENDFILE && success ) {
+            qerrorSetLineNumber(++lineNumber);
             evaluateTextLine(ptr,&ptr);
-            ++g.curLineNumber;
         }
-        /* q_endFile(filePath); */
-        g.curFilePath   = prevFilePath;
-        g.curLineNumber = prevLineNumber;
+        qerrorEndFile(filePath);
     }
     /* release resources and return */
     free(fileBuffer);
@@ -111,7 +106,6 @@ int main(int argc, char *argv[]) {
     
     /* evaluate any file provided in the command line */
     if (numberOfFiles>0) {
-        init();
         for (i=0; i<numberOfFiles; ++i) { evaluateFile(filePaths[i]); }
         if (!printErrorMessages()) { printDeferredOutput(); }
     }

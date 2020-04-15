@@ -1,0 +1,15 @@
+; error detecting test
+
+
+; invalid expression
+; PRINT
+
+; unexpected ')' (closing parenthesis)
+;PRINT (4 + 5) * 8)
+
+; too many open parentheses
+;PRINT ((4 + 5) * 8
+
+; invalid expression
+PRINT 9 9 9 (4 + 5) * 8
+
