@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		5BDF48DE243E221F0089248E /* qeval.c in Sources */ = {isa = PBXBuildFile; fileRef = 5BDF48DC243E221F0089248E /* qeval.c */; };
+		5B4161C4244759AF00F3AE02 /* main.c in Sources */ = {isa = PBXBuildFile; fileRef = 5B4161C3244759AF00F3AE02 /* main.c */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -26,7 +26,8 @@
 		5B1C0DDE243E216700F6B0AB /* qeval */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = qeval; sourceTree = BUILT_PRODUCTS_DIR; };
 		5B259399243E2FE4004CBA4E /* 02_NUMBERS.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = 02_NUMBERS.txt; sourceTree = "<group>"; };
 		5B25939A243E2FE4004CBA4E /* 01_STRINGS.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = 01_STRINGS.txt; sourceTree = "<group>"; };
-		5BDF48DC243E221F0089248E /* qeval.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = qeval.c; sourceTree = "<group>"; };
+		5B4161C2244759AF00F3AE02 /* qeval.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = qeval.h; sourceTree = "<group>"; };
+		5B4161C3244759AF00F3AE02 /* main.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = main.c; sourceTree = "<group>"; };
 		5BDF48DD243E221F0089248E /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
 		5BE91C7B2445408E00DFDF66 /* 03_MATH.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = 03_MATH.txt; sourceTree = "<group>"; };
 		5BE91C7C2445408E00DFDF66 /* 04_VARS.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = 04_VARS.txt; sourceTree = "<group>"; };
@@ -74,7 +75,8 @@
 		5BDF48DB243E221F0089248E /* src */ = {
 			isa = PBXGroup;
 			children = (
-				5BDF48DC243E221F0089248E /* qeval.c */,
+				5B4161C2244759AF00F3AE02 /* qeval.h */,
+				5B4161C3244759AF00F3AE02 /* main.c */,
 				5BDF48DD243E221F0089248E /* Makefile */,
 			);
 			name = src;
@@ -138,7 +140,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				5BDF48DE243E221F0089248E /* qeval.c in Sources */,
+				5B4161C4244759AF00F3AE02 /* main.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

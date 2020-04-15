@@ -8,7 +8,8 @@ EXAMPLES = $(EX_DIR)/01_STRINGS.txt $(EX_DIR)/02_NUMBERS.txt $(EX_DIR)/03_MATH.t
 
 TARGET_RELEASE = $(BIN_DIR)/qeval
 TARGET_DEBUG   = $(BIN_DIR)/qeval_d
-SRC            = qeval.c
+HEADERS        = qeval.h
+SOURCE         = main.c
 
 ## compiler flags ##
 CONFIG_RELEASE = -Os -DNDEBUG
@@ -21,7 +22,7 @@ CFLAGS         = $(CFLAGS_ANSI) $(CFGLAS_ERRORS)
 
 .PHONY: all debug release test clean
 
-all: debug
+all: release debug
 
 
 #----------------------------------------------
@@ -29,8 +30,8 @@ all: debug
 #
 debug: $(TARGET_DEBUG)
 
-$(TARGET_DEBUG): $(SRC)
-	$(CC) $(CFLAGS) $(CONFIG_DEBUG) $^ -o $@
+$(TARGET_DEBUG): $(SOURCE) $(HEADERS)
+	$(CC) $(CFLAGS) $(CONFIG_DEBUG) $< -o $@
 
 
 #-----------------------------------------------
@@ -38,8 +39,8 @@ $(TARGET_DEBUG): $(SRC)
 #
 release: $(TARGET_RELEASE)
 
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) $(CONFIG_RELEASE) $^ -o $@
+$(TARGET_RELEASE): $(SOURCE) $(HEADERS)
+	$(CC) $(CFLAGS) $(CONFIG_RELEASE) $< -o $@
 
 
 #----------------------------------------------
