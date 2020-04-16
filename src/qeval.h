@@ -77,7 +77,6 @@ typedef enum ErrorID_ {
 
 #define INRANGE(c,min,max) (min<=c && c<=max)
 
-
 #define safecpy_begin(dest,destend,buf,size) dest=&buf[0]; destend=&buf[size-1];
 #define safecpy(dest,destend,ptr)  if (dest<destend) { *dest++ = *ptr; } ++ptr;
 #define safecpy_char(dest,destend,ch) if (dest<destend) { *dest++ = ch; }
@@ -96,27 +95,6 @@ static int hexvalue   (int ch) { return INRANGE(ch,'0','9') ? ch-'0' : INRANGE(c
 static int octvalue   (int ch) { return INRANGE(ch,'0','7') ? ch-'0' : -1; }
 #define skipendofline(ptr) (ptr[0]=='\n' && ptr[1]=='\r') || (ptr[0]=='\r' && ptr[1]=='\n') ? ptr+=2 : ++ptr;
 #define skipblankspaces(ptr) while ( isblank(*ptr) ) { ++ptr; }
-
-/*
-static const utf8 * strdup2(const utf8 *str, int maxlen) {
-    utf8 *dest; size_t len;
-    if (!str) { return NULL; }
-    len=strlen(str); if (maxlen>0 && len>maxlen) { len=maxlen; }
-    dest=malloc(len+1); memcpy(dest,str,len); dest[len]='\0';
-    if (len==maxlen && len>=2) { dest[len-2]=dest[len-1]='.'; }
-    return dest;
-}
-
-static const utf8 * strreplace(utf8 *buffer, const utf8 *message, int charToReplace, const utf8 *replacement) {
-    utf8 *dest=buffer; const utf8 *ptr=message, *sour;
-    assert( buffer!=NULL && message!=NULL );
-    while (*ptr!='\0') {
-        if (*ptr==charToReplace && replacement) { ++ptr; sour=replacement; while (*sour!='\0') { *dest++=*sour++; } }
-        else { *dest++=*ptr++; }
-    }
-    *dest='\0'; return buffer;
-}
-*/
 
 
 /*=================================================================================================================*/
@@ -251,7 +229,7 @@ static void qerrorEndFile(const utf8* filePath) {
 
 #define qerrorSetLineNumber(x) if(theCurErrorLine) { theCurErrorLine->number = (x); }
 
-static Bool printErrorMessages(void) {
+static Bool qPrintAllErrors(void) {
     QError* error; const int column=0;
     for (error=theFirstQError; error; error=error->next) {
         if (error->line.permaPath!=NULL && error->line.number>0) {
@@ -505,7 +483,7 @@ static void addVariantToListKS(VariantList* list, const Variant* variantToAdd, c
     addVariantElementToList(list, element);
 }
 
-static void addVariantToMap(VariantMap* map, Variant* variantToAdd, const utf8* stringKey) {
+static void addVariantToMap(VariantMap* map, const Variant* variantToAdd, const utf8* stringKey) {
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     calculateHash(hash,tmp,stringKey);
@@ -644,7 +622,7 @@ static Bool readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf8 *
 /*=================================================================================================================*/
 #pragma mark - > EXPRESION EVALUATOR
 
-static VariantMap theNameMap = EmptyVariantMap;
+static VariantMap theConstantsMap = EmptyVariantMap;
 
 static Variant theVariant;
 struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
@@ -664,7 +642,7 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
     while (cPEEK(oStack)->preced cond) { cEXECUTE(f,tmp,oStack,vStack); }
 
 
-static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
+static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start; int err;
     const Operator* op; Variant variant, tmp; const Variant *variantRef;
     utf8 name[MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
@@ -725,7 +703,7 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
             }
             else if ( readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
-                variantRef = findVariantInMap(&theNameMap, name);
+                variantRef = findVariantInMap(&theConstantsMap, name);
                 if (variantRef==NULL) {
                     while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.type = TYPE_UNSOLVED;
@@ -750,6 +728,10 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
     return &theVariant;
 }
 
+static void qAddConstant(const utf8* name, const Variant* value) {
+    addVariantToMap(&theConstantsMap, value, name);
+}
+
 
 /*=================================================================================================================*/
 #pragma mark - > DEFERRED OUTPUT
@@ -772,39 +754,21 @@ static const DeferredOutput* getNextDeferredOutput(const DeferredOutput* output)
 }
 
 /*=================================================================================================================*/
-#pragma mark - > MAIN CODE
-
 /*
-    Bool qerror(ErrorID,str);
-    void qerrorBeginFile(filePath);
-    void qerrorEndFile();
-    void qerrorSetLineNumber(lineNumber);
+    PUBLIC FUNCTIONS
+    ----------------
+      Bool     qerror(ErrorID,str);
+      void     qerrorBeginFile(filePath);
+      void     qerrorEndFile();
+      void     qerrorSetLineNumber(lineNumber);
  
+      void     qAddConstant(..)
+      Variant* qEvaluateExpression(..)
+      Bool     qPrintAllErrors(..)
  
- qeval addConstant(..)
- qeval evaluateExpression(..)
- qeval addDeferredOutput(..)
- qeval solveDeferredOutputs(..)
- qeval getNextDeferredOutput(..)
+      ??? qeval addDeferredOutput(..)
+      ??? qeval solveDeferredOutputs(..)
+      ??? qeval getNextDeferredOutput(..)
  */
-
-
-static void printDeferredOutput() {
-    utf8 str[256]; const DeferredOutput* output;
-    for ( output=getFirstDeferredOutput(); output; output=getNextDeferredOutput(output) ) {
-        switch (output->variant.type) {
-            case TYPE_EMPTY:    printf("<empty>"); break;
-            case TYPE_UNSOLVED: printf("<..?..>"); break;
-            case TYPE_INUMBER:  printf("%d",output->variant.inumber.value); break;
-            case TYPE_FNUMBER:  printf("%g",output->variant.fnumber.value); break;
-            case TYPE_ASTRING:
-            case TYPE_CSTRING:
-                variantToString(&output->variant,str,sizeof(str));
-                printf("%s",str);
-                break;
-        }
-        printf(output->userValue==1 ? "\n" : " ");
-    }
-}
 
 

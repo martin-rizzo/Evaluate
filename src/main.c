@@ -6,7 +6,7 @@
 
 static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
     Bool printByDefault = FALSE;
-    Bool continueScanning;
+    Bool moreArguments;
     Variant* variant;
     utf8 name[128], *dest, *destend;
 
@@ -21,16 +21,16 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
 
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
-        variant = evaluateExpression(ptr+1,&ptr);
-        addVariantToMap(&theNameMap, variant, name);
+        variant = qEvaluateExpression(ptr+1,&ptr);
+        qAddConstant(name, variant);
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
-        do {
-            variant          = evaluateExpression(ptr,&ptr);
-            continueScanning = (*ptr==CH_PARAM_SEP); if (continueScanning) { ++ptr; }
-            addDeferredOutput(!continueScanning,variant);
-        } while (continueScanning);
+        moreArguments=TRUE; while(moreArguments) {
+            variant       = qEvaluateExpression(ptr,&ptr);
+            moreArguments = (*ptr==CH_PARAM_SEP); if (moreArguments) { ++ptr; }
+            addDeferredOutput(!moreArguments,variant);
+        }
     }
 
     /* place pointer in the first character of the next line and return it */
@@ -77,6 +77,25 @@ static Bool evaluateFile(const utf8* filePath) {
 }
 
 
+static void printDeferredOutput() {
+    utf8 str[256]; const DeferredOutput* output;
+    for ( output=getFirstDeferredOutput(); output; output=getNextDeferredOutput(output) ) {
+        switch (output->variant.type) {
+            case TYPE_EMPTY:    /* printf("<empty>"); */ break;
+            case TYPE_UNSOLVED: printf("<..?..>"); break;
+            case TYPE_INUMBER:  printf("%d",output->variant.inumber.value); break;
+            case TYPE_FNUMBER:  printf("%g",output->variant.fnumber.value); break;
+            case TYPE_ASTRING:
+            case TYPE_CSTRING:
+                variantToString(&output->variant,str,sizeof(str));
+                printf("%s",str);
+                break;
+        }
+        printf(output->userValue==1 ? "\n" : " ");
+    }
+}
+
+
 int main(int argc, char *argv[]) {
     int i;
     const utf8 *param;
@@ -106,10 +125,10 @@ int main(int argc, char *argv[]) {
     
     /* evaluate any file provided in the command line */
     if (numberOfFiles>0) {
-        for (i=0; i<numberOfFiles; ++i) { evaluateFile(filePaths[i]); }
-        if (!printErrorMessages()) { printDeferredOutput(); }
+        for (i=0; i<numberOfFiles; ++i) { evaluateFile(filePaths[i]);  }
+        if (!qPrintAllErrors()) { printDeferredOutput(); }
     }
-    stallocFreeAll();
+    permallocFreeAll();
     return 0;
 }
 
