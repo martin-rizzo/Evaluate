@@ -29,7 +29,7 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
         moreArguments=TRUE; while(moreArguments) {
             variant       = qEvaluateExpression(ptr,&ptr);
             moreArguments = (*ptr==CH_PARAM_SEP); if (moreArguments) { ++ptr; }
-            addDeferredOutput(!moreArguments,variant);
+            qDeferEvaluation(variant, !moreArguments, NULL);
         }
     }
 
@@ -77,27 +77,22 @@ static Bool evaluateFile(const utf8* filePath) {
 }
 
 
-static void printDeferredOutput() {
-    utf8 str[256]; const DeferredOutput* output;
-    for ( output=getFirstDeferredOutput(); output; output=getNextDeferredOutput(output) ) {
-        switch (output->variant.type) {
-            case TYPE_EMPTY:    /* printf("<empty>"); */ break;
-            case TYPE_UNSOLVED: printf("<..?..>"); break;
-            case TYPE_INUMBER:  printf("%d",output->variant.inumber.value); break;
-            case TYPE_FNUMBER:  printf("%g",output->variant.fnumber.value); break;
-            case TYPE_ASTRING:
-            case TYPE_CSTRING:
-                variantToString(&output->variant,str,sizeof(str));
-                printf("%s",str);
-                break;
-        }
-        printf(output->userValue==1 ? "\n" : " ");
+static void printVariant(const Variant* variant) {
+    utf8 str[256];
+    switch (variant->type) {
+        case TYPE_EMPTY:    /* printf("<empty>"); */ break;
+        case TYPE_UNSOLVED: printf("<..?..>"); break;
+        case TYPE_INUMBER:  printf("%d",variant->inumber.value); break;
+        case TYPE_FNUMBER:  printf("%g",variant->fnumber.value); break;
+        case TYPE_ASTRING:
+        case TYPE_CSTRING:
+            variantToString(variant,str,sizeof(str)); printf("%s",str); break;
     }
 }
 
 
 int main(int argc, char *argv[]) {
-    int i;
+    int i; QDeferredEvaluation* evaluation;
     const utf8 *param;
     const utf8 *help[] = {
         "USAGE: qeval [options] file-to-evaluate","",
@@ -126,7 +121,13 @@ int main(int argc, char *argv[]) {
     /* evaluate any file provided in the command line */
     if (numberOfFiles>0) {
         for (i=0; i<numberOfFiles; ++i) { evaluateFile(filePaths[i]);  }
-        if (!qPrintAllErrors()) { printDeferredOutput(); }
+        if (!qPrintAllErrors()) {
+            qPerformAllDeferredEvaluations();
+            for ( evaluation=qGetFirstDeferredEvaluation(); evaluation; evaluation=qGetNextDeferredEvaluation(evaluation) ) {
+                printVariant(&evaluation->variant);
+                printf(evaluation->userValue==1 ? "\n" : " ");
+            }
+        }
     }
     permallocFreeAll();
     return 0;

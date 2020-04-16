@@ -460,6 +460,7 @@ static void addVariantElementToList(VariantList* list, VariantElement* elementTo
     else            { list->last = (list->first = elementToAdd);      }
 }
 
+/*
 static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, int integerKey) {
     VariantElement* element;
     assert( list!=NULL && variantToAdd!=NULL );
@@ -468,6 +469,7 @@ static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, i
     copyVariant(&element->variant, variantToAdd);
     addVariantElementToList(list, element);
 }
+*/
 
 static void addVariantToListKS(VariantList* list, const Variant* variantToAdd, const utf8* stringKey) {
     VariantElement* element; int sizeofStringKey; utf8* copyofStringKey;
@@ -734,41 +736,60 @@ static void qAddConstant(const utf8* name, const Variant* value) {
 
 
 /*=================================================================================================================*/
-#pragma mark - > DEFERRED OUTPUT
+#pragma mark - > DEFERRED EVALUATIONS
 
-/* ATTENTION!: this structure must have the same format that `VariantElement` */
-typedef struct DeferredOutput { Variant variant; int userValue; } DeferredOutput;
+#define QEmptyList {0,0}
+#define q__AddToList(list,element) \
+    if ((list)->last) { (list)->last = ((list)->last->next = (element)); } \
+    else              { (list)->last = ((list)->first      = (element)); }
 
-static VariantList deferredOutputList = EmptyVariantList;
 
-static void addDeferredOutput(int userValue, const Variant* variant) {
-    assert( variant!=NULL );
-    addVariantToListKI(&deferredOutputList, variant, userValue);
+typedef struct QDeferredEvaluation { Variant variant; int userValue; void* userPtr; struct QDeferredEvaluation* next; } QDeferredEvaluation;
+typedef struct QDeferredList { QDeferredEvaluation *first, *last; } QDeferredList;
+
+static QDeferredList theDeferredList = QEmptyList;
+
+
+static void qDeferEvaluation(const Variant* variant, int userValue, void* userPtr) {
+    QDeferredEvaluation* evaluation;
+    evaluation = permalloc(sizeof(QDeferredEvaluation));
+    evaluation->userValue = userValue;
+    evaluation->userPtr   = userPtr;
+    copyVariant(&evaluation->variant, variant);
+    q__AddToList(&theDeferredList,evaluation);
 }
-static const DeferredOutput* getFirstDeferredOutput(void) {
-    return (const DeferredOutput*)deferredOutputList.first;
+
+static void qPerformAllDeferredEvaluations(void) {
+    
 }
 
-static const DeferredOutput* getNextDeferredOutput(const DeferredOutput* output) {
-    return (DeferredOutput*) ((const VariantElement*)output)->next;
-}
+#define qGetFirstDeferredEvaluation() (theDeferredList.first)
+
+#define qGetNextDeferredEvaluation(evaluation) (evaluation->next)
+
 
 /*=================================================================================================================*/
 /*
     PUBLIC FUNCTIONS
     ----------------
-      Bool     qerror(ErrorID,str);
-      void     qerrorBeginFile(filePath);
-      void     qerrorEndFile();
-      void     qerrorSetLineNumber(lineNumber);
  
-      void     qAddConstant(..)
-      Variant* qEvaluateExpression(..)
-      Bool     qPrintAllErrors(..)
+        EVALUATION OF EXPRESSIONS
+            void     qAddConstant(..)
+            Variant* qEvaluateExpression(..)
+            Bool     qPrintAllErrors(..)
  
-      ??? qeval addDeferredOutput(..)
-      ??? qeval solveDeferredOutputs(..)
-      ??? qeval getNextDeferredOutput(..)
+        DEFERRED EVALUATIONS
+            void                 qDeferEvaluation(Variant*, userValue, userPtr);
+            void                 qPerformAllDeferredEvaluations();
+            QDeferredEvaluation* qGetFirstDeferredEvaluation( );
+            QDeferredEvaluation* qGetNextDeferredEvaluation( QDeferredEvaluation* );
+
+        ERROR REPORT EXTRA INFORMATION (optional)
+            Bool     qerror(ErrorID,str);
+            void     qerrorBeginFile(filePath);
+            void     qerrorEndFile();
+            void     qerrorSetLineNumber(lineNumber);
+
  */
 
 
