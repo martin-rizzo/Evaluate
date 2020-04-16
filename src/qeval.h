@@ -37,16 +37,16 @@
 #define VERSION   "0.1"
 #define COPYRIGHT "Copyright (c) 2020 Martin Rizzo"
 
-#define MIN_FILE_SIZE       (0)           /* < minimum size for loadable files (in bytes)            */
-#define MAX_FILE_SIZE       (1024L*1024L) /* < maximum size for loadable files (in bytes)            */
-#define MAX_ERROR_COUNT     (32)          /* < maximum number of errors able to be reported          */
-#define MAX_NAME_LEN        (63)          /* < maximum length for names of vars (in bytes)           */
-#define MAX_ERRMSG_LEN      (63)          /* < maximum length for error messages (in bytes)          */
-#define MAX_ERRSTR_LEN      (63)          /* < maximum length for the optional error text (in bytes) */
-#define CALC_STACK_SIZE     (256)         /* < the calculator's stack size in number of elements     */
-#define STALLOC_CHUNK_SIZE  (64*1024)     /* < size of each chunk of memory allocated by autoalloc   */
-#define MIN_PRECEDENCE      (1)           /* < the minimum valid operator predecence                 */
-#define NUMBER_OF_MAP_SLOTS (77)          /* < number of slots used in the hashmap                   */
+#define MIN_FILE_SIZE        (0)           /* < minimum size for loadable files (in bytes)            */
+#define MAX_FILE_SIZE        (1024L*1024L) /* < maximum size for loadable files (in bytes)            */
+#define MAX_ERROR_COUNT      (32)          /* < maximum number of errors able to be reported          */
+#define MAX_NAME_LEN         (63)          /* < maximum length for names of vars (in bytes)           */
+#define MAX_ERRMSG_LEN       (63)          /* < maximum length for error messages (in bytes)          */
+#define MAX_ERRSTR_LEN       (63)          /* < maximum length for the optional error text (in bytes) */
+#define CALC_STACK_SIZE      (256)         /* < the calculator's stack size in number of elements     */
+#define PERMALLOC_CHUNK_SIZE (64*1024)     /* < size of each chunk of memory allocated by autoalloc   */
+#define MIN_PRECEDENCE       (1)           /* < the minimum valid operator predecence                 */
+#define NUMBER_OF_MAP_SLOTS  (77)          /* < number of slots used in the hashmap                   */
 
 
 
@@ -120,49 +120,55 @@ static const utf8 * strreplace(utf8 *buffer, const utf8 *message, int charToRepl
 
 
 /*=================================================================================================================*/
-#pragma mark - > PSEUDO STATIC ALLOCATION
+#pragma mark - > PERMANENT DYNAMIC ALLOCATION
 
-typedef struct StallocChunk { struct StallocChunk* next; char data[STALLOC_CHUNK_SIZE]; } StallocChunk;
-StallocChunk* theStallocChunk     = NULL;
-char*         theStallocPtr       = NULL;
-int           theStallocRemaining = 0;
+typedef struct PermallocChunk { struct PermallocChunk* next; char data[PERMALLOC_CHUNK_SIZE]; } PermallocChunk;
+PermallocChunk* thePermallocChunk     = NULL;
+char*           thePermallocPtr       = NULL;
+int             thePermallocRemaining = 0;
 
 /**
  * Allocates a block of memory that stays valid until the end of the program
  * @param size The size of the memory block to alloc, in bytes
  * @return     A pointer to the beginning of the block
  */
-static void* stalloc(int size) {
-    StallocChunk* prevStallocChunk; void* ptr;
-    if (theStallocRemaining<size) {
-        prevStallocChunk=theStallocChunk; theStallocChunk=malloc(sizeof(StallocChunk));
-        if (prevStallocChunk) { prevStallocChunk->next = theStallocChunk; }
-        theStallocPtr       = theStallocChunk->data;
-        theStallocRemaining = STALLOC_CHUNK_SIZE;
+static void* permalloc(int size) {
+    PermallocChunk* prevPermallocChunk; void* ptr;
+    if (thePermallocRemaining<size) {
+        prevPermallocChunk=thePermallocChunk; thePermallocChunk=malloc(sizeof(PermallocChunk));
+        if (prevPermallocChunk) { prevPermallocChunk->next = thePermallocChunk; }
+        thePermallocPtr       = thePermallocChunk->data;
+        thePermallocRemaining = PERMALLOC_CHUNK_SIZE;
     }
-    /* allocates the first 'size' bytes counting from 'theStallocPtr' */
-    ptr=theStallocPtr; theStallocPtr+=size; theStallocRemaining-=size;
+    /* allocates the first 'size' bytes counting from 'thePermallocPtr' */
+    ptr=thePermallocPtr; thePermallocPtr+=size; thePermallocRemaining-=size;
     return ptr;
 }
 
-static const utf8* stalloc_strreplace(const utf8* message, int charToReplace, const utf8* replacement) {
-    utf8 *buffer, *dest; const utf8 *ptr=message;
-    assert( message!=NULL );
+/**
+ * Allocates a string that is the result of replace a character from the provided message
+ * @param string         The original string
+ * @param charToReplace  The character to be replaced
+ * @param replacement    The string that replaces the found character
+ */
+static const utf8* permalloc_stringreplace(const utf8* string, int charToReplace, const utf8* replacement) {
+    utf8 *buffer, *dest; const utf8 *ptr=string;
+    assert( string!=NULL );
     
-    dest = buffer = stalloc( (int)strlen(message) + (replacement!=NULL ? (int)strlen(replacement) : 0) + 1 );
-    ptr=message; while (*ptr!='\0' && *ptr!=charToReplace) { *dest++=*ptr++; }
+    dest = buffer = permalloc( (int)strlen(string) + (replacement!=NULL ? (int)strlen(replacement) : 0) + 1 );
+    ptr=string; while (*ptr!='\0' && *ptr!=charToReplace) { *dest++=*ptr++; }
     if (*ptr==charToReplace && replacement!=NULL) { ++ptr; while (*replacement!='\0') { *dest++=*replacement++; } }
     while (*ptr!='\0') { *dest++=*ptr++; }
     *dest='\0'; return buffer;
 }
 
 /**
- * Deallocates all memory that previously was allocated with 'stalloc(..)'
+ * Deallocates all memory that previously was allocated with 'permalloc(..)'
  */
-static void stallocFreeAll() {
-    StallocChunk *chunk, *nextChunk=NULL;
-    for (chunk=theStallocChunk; chunk; chunk=nextChunk) { nextChunk=chunk->next; free(chunk); }
-    theStallocPtr=NULL; theStallocChunk=NULL; theStallocRemaining=0;
+static void permallocFreeAll() {
+    PermallocChunk *chunk, *nextChunk=NULL;
+    for (chunk=thePermallocChunk; chunk; chunk=nextChunk) { nextChunk=chunk->next; free(chunk); }
+    thePermallocPtr=NULL; thePermallocChunk=NULL; thePermallocRemaining=0;
 }
 
 
@@ -214,11 +220,11 @@ static int qerror(ErrorID errorID, const utf8 *str) {
         case ERR_UNKNOWN_PARAM:        message = "unknown parameter"; break;
         default:                       message = "unknown error";     break;
     }
-    newError = stalloc(sizeof(QError));
+    newError = permalloc(sizeof(QError));
     newError->id             = errorID;
     newError->line.permaPath = theCurErrorLine ? theCurErrorLine->permaPath : 0;
     newError->line.number    = theCurErrorLine ? theCurErrorLine->number    : 0;
-    newError->str            = stalloc_strreplace(message,'$',str);
+    newError->str            = permalloc_stringreplace(message,'$',str);
     newError->next           = NULL;
     if (!theFirstQError) { theFirstQError=newError; }
     theLastQError = theLastQError ? (theLastQError->next=newError) : newError;
@@ -229,7 +235,7 @@ static void qerrorBeginFile(const utf8* filePath) {
     QErrorLine* newErrorLine;
     assert(filePath!=NULL);
     newErrorLine = malloc(sizeof(QErrorLine));
-    newErrorLine->permaPath = stalloc_strreplace(filePath,0,0);
+    newErrorLine->permaPath = permalloc_stringreplace(filePath,0,0);
     newErrorLine->number    = 0;
     newErrorLine->prev      = theCurErrorLine;
     theCurErrorLine = newErrorLine;
@@ -464,7 +470,7 @@ static void copyVariant(Variant* dest, const Variant* sour) {
         case TYPE_CSTRING:
         case TYPE_UNSOLVED:
             length = (int)(sour->astring.end - sour->astring.begin);
-            dest->astring.begin = (begin = stalloc(length+1));
+            dest->astring.begin = (begin = permalloc(length+1));
             dest->astring.end   = begin + length;
             memcpy(begin, sour->astring.begin, length); begin[length]='\0';
             break;
@@ -479,7 +485,7 @@ static void addVariantElementToList(VariantList* list, VariantElement* elementTo
 static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, int integerKey) {
     VariantElement* element;
     assert( list!=NULL && variantToAdd!=NULL );
-    element = stalloc(sizeof(VariantElement));
+    element = permalloc(sizeof(VariantElement));
     element->key.integer = integerKey;
     copyVariant(&element->variant, variantToAdd);
     addVariantElementToList(list, element);
@@ -490,10 +496,10 @@ static void addVariantToListKS(VariantList* list, const Variant* variantToAdd, c
     assert( list!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     
     sizeofStringKey = (int)strlen(stringKey)+1;
-    copyofStringKey = stalloc(sizeofStringKey);
+    copyofStringKey = permalloc(sizeofStringKey);
     memcpy(copyofStringKey, stringKey, sizeofStringKey);
     
-    element             = stalloc(sizeof(VariantElement));
+    element             = permalloc(sizeof(VariantElement));
     element->key.string = copyofStringKey;
     copyVariant(&element->variant, variantToAdd);
     addVariantElementToList(list, element);
@@ -503,7 +509,7 @@ static void addVariantToMap(VariantMap* map, Variant* variantToAdd, const utf8* 
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     calculateHash(hash,tmp,stringKey);
-    if (map->slots==NULL) { map->slots=stalloc(NUMBER_OF_MAP_SLOTS*sizeof(VariantMapSlot)); }
+    if (map->slots==NULL) { map->slots=permalloc(NUMBER_OF_MAP_SLOTS*sizeof(VariantMapSlot)); }
     addVariantToListKS(&map->slots[hash%NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
 }
 
