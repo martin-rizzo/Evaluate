@@ -521,7 +521,7 @@ static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr)
     const utf8 *last, *type; int base, value, digit; double fvalue, fdivisor;
     assert( out_v!=NULL && (ptr!=NULL && *ptr!=CH_PARAM_SEP && *ptr!='\0') );
     
-    if ( !isliteral(*ptr) ) { return FALSE; }
+    if ( !isliteral(*ptr) && *ptr!='.' ) { return FALSE; }
     base = 0;
 
     /* try to recognize the prefix that define the number representation (base) */
@@ -537,7 +537,7 @@ static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr)
     last=ptr; while ( isliteral(*last) || *last=='.' ) { ++last; } --last;
     
     /* try to find the base of a possible number (if it wasn't already found) */
-    if ( base==0 && isdigit(*ptr) ) {
+    if ( base==0 && (isdigit(*ptr) || *ptr=='.') ) {
         if      ( isalpha(*last) )                 { type=last;    --last;  } /* < type defined as suffix       */
         else if ( ptr[0]=='0' && isalpha(ptr[1]) ) { type=(ptr+1); ptr+=2;  } /* < type defined as 0x prefix    */
         else                                       { type=NULL;    base=10; } /* < no type (default to decimal) */
