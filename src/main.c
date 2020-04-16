@@ -41,31 +41,31 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
 
 
 static Bool evaluateFile(const utf8* filePath) {
-    FILE* file=NULL; long fileSize=0; utf8 *fileBuffer=NULL; const utf8 *ptr; int lineNumber;
+    FILE* file=NULL; long fileSize=0; utf8 *fileBuffer=NULL; const utf8 *ptr; int err=0, lineNumber;
     assert( filePath!=NULL );
     
     /* try to load the entire file to a buffer */
-    if (success) {
-        file=fopen(filePath,"rb"); if (!file) { qerror(ERR_FILE_NOT_FOUND,filePath); }
+    if (!err) {
+        file=fopen(filePath,"rb"); if (!file) { err=qerror(ERR_FILE_NOT_FOUND,filePath); }
     }
-    if (success) {
+    if (!err) {
         fseek(file,0L,SEEK_END); fileSize=ftell(file); rewind(file);
-        if ( fileSize>MAX_FILE_SIZE ) { qerror(ERR_FILE_TOO_LARGE,filePath); }
+        if ( fileSize>MAX_FILE_SIZE ) { err=qerror(ERR_FILE_TOO_LARGE,filePath); }
     }
-    if (success) {
-        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { qerror(ERR_NOT_ENOUGH_MEMORY,0); }
+    if (!err) {
+        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { err=qerror(ERR_NOT_ENOUGH_MEMORY,0); }
     }
-    if (success) {
-        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { qerror(ERR_CANNOT_READ_FILE,filePath); }
+    if (!err) {
+        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { err=qerror(ERR_CANNOT_READ_FILE,filePath); }
         else { fileBuffer[fileSize]=CH_ENDFILE; }
     }
     if (file) { fclose(file); }
     
     /* if the file is loaded in buffer    */
     /* then evaluate all lines one by one */
-    if (success) {
+    if (!err) {
         qerrorBeginFile(filePath);
-        lineNumber=0; ptr=fileBuffer; while ( *ptr!=CH_ENDFILE && success ) {
+        lineNumber=0; ptr=fileBuffer; while ( *ptr!=CH_ENDFILE ) {
             qerrorSetLineNumber(++lineNumber);
             evaluateTextLine(ptr,&ptr);
         }
@@ -73,7 +73,7 @@ static Bool evaluateFile(const utf8* filePath) {
     }
     /* release resources and return */
     free(fileBuffer);
-    return success ? TRUE : FALSE;
+    return !err ? TRUE : FALSE;
 }
 
 
@@ -110,7 +110,7 @@ int main(int argc, char *argv[]) {
         if (!printErrorMessages()) { printDeferredOutput(); }
     }
     stallocFreeAll();
-    return success ? 0 : -1;
+    return 0;
 }
 
 

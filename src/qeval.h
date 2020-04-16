@@ -180,20 +180,21 @@ typedef struct QErrorLine { const utf8* permaPath; int number; struct QErrorLine
 typedef struct QError { ErrorID id; const utf8* str; QErrorLine line; struct QError* next; } QError;
 
 static QErrorLine* theCurErrorLine = NULL;
-QError*            theFirstError   = NULL;
+QError*            theFirstQError  = NULL;
+QError*            theLastQError   = NULL;
 
 /**
  * Global var that indicates whether the program is being successfully executed.
  * It is TRUE while no error is reported.
  */
-#define success (theFirstError==NULL)
+/* #define success (theFirstError==NULL) */
 
 /**
  * Reports a error
  * @param errorID  The error identifier, ex: ERR_CANNOT_READ_FILE
  * @param str      The optional text attached to the error reported (it can be NULL)
  */
-static Bool qerror(ErrorID errorID, const utf8 *str) {
+static int qerror(ErrorID errorID, const utf8 *str) {
     const utf8* message; QError* newError;
     switch (errorID) {
         case ERR_NO_ERROR:             message = "SUCCESS"; break;
@@ -219,8 +220,9 @@ static Bool qerror(ErrorID errorID, const utf8 *str) {
     newError->line.number    = theCurErrorLine ? theCurErrorLine->number    : 0;
     newError->str            = stalloc_strreplace(message,'$',str);
     newError->next           = NULL;
-    theFirstError = theFirstError ? (theFirstError->next=newError) : newError;
-    return (errorID==ERR_NO_ERROR);
+    if (!theFirstQError) { theFirstQError=newError; }
+    theLastQError = theLastQError ? (theLastQError->next=newError) : newError;
+    return errorID;
 }
 
 static void qerrorBeginFile(const utf8* filePath) {
@@ -244,14 +246,15 @@ static void qerrorEndFile(const utf8* filePath) {
 #define qerrorSetLineNumber(x) if(theCurErrorLine) { theCurErrorLine->number = (x); }
 
 static Bool printErrorMessages(void) {
-    QError* error; const int column=1;
-    for (error=theFirstError; error; error=error->next) {
+    QError* error; const int column=0;
+    for (error=theFirstQError; error; error=error->next) {
         if (error->line.permaPath!=NULL && error->line.number>0) {
-            printf("%s:%d:%d: ", error->line.permaPath, error->line.number, column);
+            if (column>0) { printf("%s:%d:%d: ", error->line.permaPath, error->line.number, column); }
+            else          { printf("%s:%d: "   , error->line.permaPath, error->line.number);         }
         }
         printf("%s %s\n", "error:", error->str);
     }
-    return (theFirstError!=NULL);
+    return (theFirstQError!=NULL);
 }
 
 /*=================================================================================================================*/
@@ -656,13 +659,13 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 
 
 static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
-    const utf8 *ptr = start; int error;
+    const utf8 *ptr = start; int err;
     const Operator* op; Variant variant, tmp; const Variant *variantRef;
     utf8 name[MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
 
-    error = 0;
+    err = 0;
     theVariant.type = TYPE_EMPTY;
     theVariant.unsolved.begin = ptr;
     skipblankspaces(ptr);
@@ -706,7 +709,7 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
             }
             else if (*ptr==')') {
                 cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
-                if (cPOP(opStack)!=&OpParenthesis) { qerror(error=ERR_UNEXPECTED_PTHESIS,0); }
+                if (cPOP(opStack)!=&OpParenthesis) { err=qerror(ERR_UNEXPECTED_PTHESIS,0); }
                 ++ptr;
             }
             else if ( readOperator(&op,precededByNumber,ptr,&ptr) ) {
@@ -726,15 +729,15 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
                 }
                 cPUSH(vStack, (*variantRef));
             }
-            else { qerror(error=ERR_INVALID_EXPRESSION,0); }
+            else { err=qerror(ERR_INVALID_EXPRESSION,0); }
             skipblankspaces(ptr);
         }
 
         /* process any pending operator before return */
-        if (!error) { cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack); }
-        if (!error && cPEEK(opStack)==&OpParenthesis) { qerror(error=ERR_TOO_MANY_OPEN_PTHESES,0); }
-        if (!error && (vStack.i!=3 || opStack.i!=2) ) { qerror(error=ERR_INVALID_EXPRESSION,0); }
-        if (!error) { theVariant = cPOP(vStack); }
+        if (!err) { cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack); }
+        if (!err && cPEEK(opStack)==&OpParenthesis) { err=qerror(ERR_TOO_MANY_OPEN_PTHESES,0); }
+        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=qerror(ERR_INVALID_EXPRESSION,0); }
+        if (!err) { theVariant = cPOP(vStack); }
     }
 
     while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
