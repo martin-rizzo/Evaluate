@@ -721,7 +721,6 @@ static Variant * evaluateExpression(const utf8 *start, const utf8 **out_end) {
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
                 variantRef = findVariantInMap(&theNameMap, name);
                 if (variantRef==NULL) {
-                    assert( theVariant.type == TYPE_UNSOLVED );
                     while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.type = TYPE_UNSOLVED;
                     theVariant.unsolved.end  = (*out_end) = ptr;
