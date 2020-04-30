@@ -1,8 +1,6 @@
-/bin/*
-/src/*.o
-!/bin/README.md
+/examples/eva
+/examples/eva-debug
 
 xcuserdata/
 .DS_Store
-/qeval.sublime*
 
