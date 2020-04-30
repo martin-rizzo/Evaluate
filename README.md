@@ -1,32 +1,36 @@
-QEVAL (Quick math expression evaluator)
-=================================
+Evaluate
+========
 
-Description
------------
+A portable, one-header library to evaluate math expressions.
 
-**QEVAL** is a cross-platform minimalist mathematical expression evaluator used as base of the QASM assembler, it is written in pure ANSI C using a simple quick-and-dirty approach.
-
-The aim of this project is to implement a full-fledged integer expression evaluator in about 1000 lines of code. The project is only a prototype yet.
+<!-- Evaluate will be the mathematical expression evaluator used in KAS assembler -->
 
 
-Usage
------
-To process and evaluate each line of a file use the following command:
-    
-    qeval [options] filename.txt
+Installation and usage
+----------------------
 
-    
-Source
-------
+Evaluate is a single header library. That is, you only need to copy the `'evaluate.h'` header into any folder of your project's source tree. Then when you want to start using Evaluate functions for first time, you must include the header in your code but making sure to define EVALUATE_IMPLEMENTATION macro just before including it:
 
-The full source code for this assembler is available at: <br/>
-<http://bitbucket.com/martinrizzo/qeval>
+```C
+    #define EVALUATE_IMPLEMENTATION
+    #include "evaluate.h"
+```
 
+Later if other source files in your project need to use the Evaluate functions then they only must include the header as usual WITHOUT having to define the macro again.
+
+Functions
+---------
+
+Documentation
+-------------
+
+Examples
+--------
 
 License
 -------
 
 Copyright (c) 2020 Martin Rizzo
 
-Licensed under the MIT license. <br/>
-See "LICENSE.md" file in the project root for details.
+This project is licensed under the MIT license.  
+See the [LICENSE.md]("LICENSE.md") file for details.
