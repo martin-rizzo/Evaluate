@@ -32,14 +32,28 @@
 #ifndef EVALUATE_H_INCLUDED
 #define EVALUATE_H_INCLUDED
 
+typedef char utf8;                         /* < unicode variable width character encoding */
+typedef int Bool; enum { FALSE=0, TRUE };  /* < Boolean */
 
+/** Identifier of errors generated during expression evaluation */
+typedef enum EVERR {
+    EVERR_NO_ERROR=0,          EVERR_FILE_NOT_FOUND=-1000, EVERR_FILE_TOO_LARGE,     EVERR_CANNOT_READ_FILE,
+    EVERR_NOT_ENOUGH_MEMORY,   EVERR_INT8_OUT_OF_RANGE,    EVERR_INT16_OUT_OF_RANGE, EVERR_BITNUM_OUT_OF_RANGE,
+    EVERR_INVALID_EXPRESSION,  EVERR_INVALID_IMODE,        EVERR_UNEXPECTED_PTHESIS, EVERR_TOO_MANY_OPEN_PTHESES,
+    EVERR_INVALID_RST_ADDRESS, EVERR_DISP_MUST_BE_ZERO,    EVERR_DISP_OUT_OF_RANGE,  EVERR_UNKNOWN_PARAM
+} EVERR;
+
+extern int  everr(EVERR everr, const utf8 *str);
+extern void everrBeginFile(const utf8* filePath);
+extern void everrEndFile(const utf8* filePath);
+extern void everrSetLineNumber(int lineNumber);
+extern Bool everrPrintErrors(void);
 
 
 /*=================================================================================================================*/
-#pragma mark - > INTERNAL PRIVATE FUNCTIONS
+#pragma mark - > IMPLEMENTATION
 
 #ifdef EVALUATE_IMPLEMENTATION
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,10 +66,6 @@
 #define EV_MIN_PRECEDENCE       (1)           /* < the minimum valid operator predecence                 */
 #define EV_NUMBER_OF_MAP_SLOTS  (77)          /* < number of slots used in the hashmap                   */
 
-typedef char utf8;                         /* < unicode variable width character encoding */
-typedef int Bool; enum { FALSE=0, TRUE };  /* < Boolean */
-
-
 /** Some special characters used in expressions */
 typedef enum EVCH {
     EVCH_ENDOFFILE     ='\0' , EVCH_STARTCOMMENT=';',  EVCH_PARAM_SEP    =',',
@@ -63,13 +73,6 @@ typedef enum EVCH {
     EVCH_HEXPREFIX_ADDR='$'  , EVCH_HEXPREFIX   ='#' , EVCH_BINPREFIX    ='%'
 } StdChars_;
 
-/** Identifier of errors generated during expression evaluation */
-typedef enum EVERR {
-    EVERR_NO_ERROR=0,          EVERR_FILE_NOT_FOUND=-1000, EVERR_FILE_TOO_LARGE,     EVERR_CANNOT_READ_FILE,
-    EVERR_NOT_ENOUGH_MEMORY,   EVERR_INT8_OUT_OF_RANGE,    EVERR_INT16_OUT_OF_RANGE, EVERR_BITNUM_OUT_OF_RANGE,
-    EVERR_INVALID_EXPRESSION,  EVERR_INVALID_IMODE,        EVERR_UNEXPECTED_PTHESIS, EVERR_TOO_MANY_OPEN_PTHESES,
-    EVERR_INVALID_RST_ADDRESS, EVERR_DISP_MUST_BE_ZERO,    EVERR_DISP_OUT_OF_RANGE,  EVERR_UNKNOWN_PARAM
-} EVERR;
 
 
 /*=================================================================================================================*/
@@ -177,7 +180,7 @@ QError*            theLastQError   = NULL;
  * @param everr    The evaluation error identifier, ex: EVERR_INVALID_EXPRESSION
  * @param str      The optional text attached to the error reported (it can be NULL)
  */
-static int qerror(EVERR everr, const utf8 *str) {
+int everr(EVERR everr, const utf8 *str) {
     const utf8* message; QError* newError;
     switch (everr) {
         case EVERR_NO_ERROR:             message = "SUCCESS"; break;
@@ -208,7 +211,7 @@ static int qerror(EVERR everr, const utf8 *str) {
     return everr;
 }
 
-static void qerrorBeginFile(const utf8* filePath) {
+void everrBeginFile(const utf8* filePath) {
     QErrorLine* newErrorLine;
     assert(filePath!=NULL);
     newErrorLine = malloc(sizeof(QErrorLine));
@@ -218,7 +221,7 @@ static void qerrorBeginFile(const utf8* filePath) {
     theCurErrorLine = newErrorLine;
 }
 
-static void qerrorEndFile(const utf8* filePath) {
+void everrEndFile(const utf8* filePath) {
     QErrorLine* prevErrorLine;
     assert( filePath!=NULL );
     assert( theCurErrorLine!=NULL && strcmp(theCurErrorLine->permaPath,filePath)==0 );
@@ -226,9 +229,11 @@ static void qerrorEndFile(const utf8* filePath) {
     free(theCurErrorLine); theCurErrorLine=prevErrorLine;
 }
 
-#define qerrorSetLineNumber(x) if(theCurErrorLine) { theCurErrorLine->number = (x); }
+void everrSetLineNumber(int lineNumber) {
+    theCurErrorLine->number = lineNumber;
+}
 
-static Bool qPrintAllErrors(void) {
+Bool everrPrintErrors(void) {
     QError* error; const int column=0;
     for (error=theFirstQError; error; error=error->next) {
         if (error->line.permaPath!=NULL && error->line.number>0) {
@@ -694,7 +699,7 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
             }
             else if (*ptr==')') {
                 cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
-                if (cPOP(opStack)!=&OpParenthesis) { err=qerror(EVERR_UNEXPECTED_PTHESIS,0); }
+                if (cPOP(opStack)!=&OpParenthesis) { err=everr(EVERR_UNEXPECTED_PTHESIS,0); }
                 ++ptr;
             }
             else if ( readOperator(&op,precededByNumber,ptr,&ptr) ) {
@@ -713,14 +718,14 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
                 }
                 cPUSH(vStack, (*variantRef));
             }
-            else { err=qerror(EVERR_INVALID_EXPRESSION,0); }
+            else { err=everr(EVERR_INVALID_EXPRESSION,0); }
             skipblankspaces(ptr);
         }
 
         /* process any pending operator before return */
         if (!err) { cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack); }
-        if (!err && cPEEK(opStack)==&OpParenthesis) { err=qerror(EVERR_TOO_MANY_OPEN_PTHESES,0); }
-        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=qerror(EVERR_INVALID_EXPRESSION,0); }
+        if (!err && cPEEK(opStack)==&OpParenthesis) { err=everr(EVERR_TOO_MANY_OPEN_PTHESES,0); }
+        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=everr(EVERR_INVALID_EXPRESSION,0); }
         if (!err) { theVariant = cPOP(vStack); }
     }
 
