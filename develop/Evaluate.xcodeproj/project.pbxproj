@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		5B219F67245B7C7500852A77 /* Makefile in Sources */ = {isa = PBXBuildFile; fileRef = 5B219F65245B7C7500852A77 /* Makefile */; };
 		5B219F68245B7C7500852A77 /* eva.c in Sources */ = {isa = PBXBuildFile; fileRef = 5B219F66245B7C7500852A77 /* eva.c */; };
 /* End PBXBuildFile section */
 
@@ -44,8 +43,8 @@
 		5B219F64245B7C7500852A77 /* examples */ = {
 			isa = PBXGroup;
 			children = (
-				5B219F65245B7C7500852A77 /* Makefile */,
 				5B219F66245B7C7500852A77 /* eva.c */,
+				5B219F65245B7C7500852A77 /* Makefile */,
 			);
 			name = examples;
 			path = ../examples;
@@ -126,7 +125,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				5B219F68245B7C7500852A77 /* eva.c in Sources */,
-				5B219F67245B7C7500852A77 /* Makefile in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -162,7 +160,6 @@
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_SEMICOLON_BEFORE_METHOD_BODY = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_IMPLICIT_CONVERSION = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
@@ -232,7 +229,6 @@
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_SEMICOLON_BEFORE_METHOD_BODY = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_IMPLICIT_CONVERSION = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
@@ -269,10 +265,7 @@
 		5BAAFA82245B7B6400A06A4E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
 				CODE_SIGN_STYLE = Automatic;
-				GCC_C_LANGUAGE_STANDARD = gnu11;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -280,10 +273,7 @@
 		5BAAFA83245B7B6400A06A4E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
 				CODE_SIGN_STYLE = Automatic;
-				GCC_C_LANGUAGE_STANDARD = gnu11;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
