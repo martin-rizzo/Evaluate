@@ -29,6 +29,17 @@
  *  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  * -------------------------------------------------------------------------
  */
+#ifndef EVALUATE_H_INCLUDED
+#define EVALUATE_H_INCLUDED
+
+
+
+
+/*=================================================================================================================*/
+#pragma mark - > INTERNAL PRIVATE FUNCTIONS
+
+#ifdef EVALUATE_IMPLEMENTATION
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,14 +56,14 @@ typedef char utf8;                         /* < unicode variable width character
 typedef int Bool; enum { FALSE=0, TRUE };  /* < Boolean */
 
 
-/* some standard characters */
+/** Some special characters used in expressions */
 typedef enum EVCH {
     EVCH_ENDOFFILE     ='\0' , EVCH_STARTCOMMENT=';',  EVCH_PARAM_SEP    =',',
     EVCH_ASMSTRING     ='\'' , EVCH_CSTRING     ='"' , EVCH_STRING_ESCAPE='\\' ,
     EVCH_HEXPREFIX_ADDR='$'  , EVCH_HEXPREFIX   ='#' , EVCH_BINPREFIX    ='%'
 } StdChars_;
 
-/** evaluation error identifier */
+/** Identifier of errors generated during expression evaluation */
 typedef enum EVERR {
     EVERR_NO_ERROR=0,          EVERR_FILE_NOT_FOUND=-1000, EVERR_FILE_TOO_LARGE,     EVERR_CANNOT_READ_FILE,
     EVERR_NOT_ENOUGH_MEMORY,   EVERR_INT8_OUT_OF_RANGE,    EVERR_INT16_OUT_OF_RANGE, EVERR_BITNUM_OUT_OF_RANGE,
@@ -784,4 +795,8 @@ static void qPerformAllDeferredEvaluations(void) {
 
  */
 
+
+#endif /* ifdef EVALUATE_IMPLEMENTATION */
+
+#endif /* ifndef EVALUATE_H_INCLUDED */
 
