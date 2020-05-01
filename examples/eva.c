@@ -6,6 +6,8 @@
 #define MIN_FILE_SIZE        (0)           /* < minimum size for loadable files (in bytes)            */
 #define MAX_FILE_SIZE        (1024L*1024L) /* < maximum size for loadable files (in bytes)            */
 #define MAX_FILES 256  /* maximum number of files to evaluate */
+
+#define skipendofline(ptr) (ptr[0]=='\n' && ptr[1]=='\r') || (ptr[0]=='\r' && ptr[1]=='\n') ? ptr+=2 : ++ptr;
 #define isOption(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
 
 
@@ -34,7 +36,7 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         moreArguments=TRUE; while(moreArguments) {
             variant       = qEvaluateExpression(ptr,&ptr);
-            moreArguments = (*ptr==CH_PARAM_SEP); if (moreArguments) { ++ptr; }
+            moreArguments = (*ptr==EVCH_PARAM_SEP); if (moreArguments) { ++ptr; }
             qDeferEvaluation(variant, !moreArguments, NULL);
         }
     }
@@ -63,7 +65,7 @@ static Bool evaluateFile(const utf8* filePath) {
     }
     if (!err) {
         if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { err=qerror(EVERR_CANNOT_READ_FILE,filePath); }
-        else { fileBuffer[fileSize]=CH_ENDFILE; }
+        else { fileBuffer[fileSize]=EVCH_ENDOFFILE; }
     }
     if (file) { fclose(file); }
     
@@ -71,7 +73,7 @@ static Bool evaluateFile(const utf8* filePath) {
     /* then evaluate all lines one by one */
     if (!err) {
         qerrorBeginFile(filePath);
-        lineNumber=0; ptr=fileBuffer; while ( *ptr!=CH_ENDFILE ) {
+        lineNumber=0; ptr=fileBuffer; while ( *ptr!=EVCH_ENDOFFILE ) {
             qerrorSetLineNumber(++lineNumber);
             evaluateTextLine(ptr,&ptr);
         }

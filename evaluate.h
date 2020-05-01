@@ -46,12 +46,10 @@ typedef int Bool; enum { FALSE=0, TRUE };  /* < Boolean */
 
 
 /* some standard characters */
-typedef enum StdChars_ {
-    CH_ENDFILE       ='\0' , CH_ENDLABEL    =':' , CH_STARTCOMMENT  =';'  , CH_SPACE    =' '  ,
-    CH_PARAM_SEP     =','  , CH_EXT_SEP     ='.' , CH_PATH_SEP      ='/'  , CH_PATH_SEP2='\\' ,
-    CH_ASMSTRING     ='\'' , CH_CSTRING     ='"' , CH_STRING_ESCAPE ='\\' ,
-    CH_HEXPREFIX_ADDR='$'  , CH_HEXPREFIX   ='#' , CH_BINPREFIX   ='%'  ,
-    CH_OPTIONAL_DIREC_PREFIX = '.'
+typedef enum EVCH {
+    EVCH_ENDOFFILE     ='\0' , EVCH_STARTCOMMENT=';',  EVCH_PARAM_SEP    =',',
+    EVCH_ASMSTRING     ='\'' , EVCH_CSTRING     ='"' , EVCH_STRING_ESCAPE='\\' ,
+    EVCH_HEXPREFIX_ADDR='$'  , EVCH_HEXPREFIX   ='#' , EVCH_BINPREFIX    ='%'
 } StdChars_;
 
 /** evaluation error identifier */
@@ -79,12 +77,11 @@ typedef enum EVERR {
 static int isbin      (int ch) { return ch=='0' || ch=='1'; }
 static int ishex      (int ch) { return INRANGE(ch,'0','9') || INRANGE(ch,'A','F') || INRANGE(ch,'a','f'); }
 static int isname     (int ch) { return isalnum(ch) || ch=='_' || ch=='@' || ch=='.' || ch=='$' || ch=='#'; }
-static int isliteral  (int ch) { return isalnum(ch) || ch=='_' || ch==CH_HEXPREFIX_ADDR || ch==CH_HEXPREFIX || ch==CH_BINPREFIX; }
-static int isendofcode(int ch) { return ch=='\r' || ch=='\n' || ch==CH_STARTCOMMENT || ch==CH_ENDFILE; }
-static int isendofline(int ch) { return ch==CH_ENDFILE || ch=='\r' || ch=='\n'; }
+static int isliteral  (int ch) { return isalnum(ch) || ch=='_' || ch==EVCH_HEXPREFIX_ADDR || ch==EVCH_HEXPREFIX || ch==EVCH_BINPREFIX; }
+static int isendofcode(int ch) { return ch=='\r' || ch=='\n' || ch==EVCH_STARTCOMMENT || ch==EVCH_ENDOFFILE; }
+static int isendofline(int ch) { return ch==EVCH_ENDOFFILE || ch=='\r' || ch=='\n'; }
 static int hexvalue   (int ch) { return INRANGE(ch,'0','9') ? ch-'0' : INRANGE(ch,'A','F') ? ch-'A'+10 : INRANGE(ch,'a','f') ? ch-'a'+10 : -1; }
 static int octvalue   (int ch) { return INRANGE(ch,'0','7') ? ch-'0' : -1; }
-#define skipendofline(ptr) (ptr[0]=='\n' && ptr[1]=='\r') || (ptr[0]=='\r' && ptr[1]=='\n') ? ptr+=2 : ++ptr;
 #define skipblankspaces(ptr) while ( isblank(*ptr) ) { ++ptr; }
 
 
@@ -317,8 +314,8 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
             safecpy_begin(dest,destend,buffer,bufferSize);
             ptr=variant->astring.begin; ptrend=variant->astring.end;
             do {
-                while (ptr<ptrend && *ptr!=CH_ASMSTRING) { safecpy(dest,destend,ptr); }
-                if  (ptr<ptrend) { safecpy_char(dest,destend,CH_ASMSTRING); ptr+=2; }
+                while (ptr<ptrend && *ptr!=EVCH_ASMSTRING) { safecpy(dest,destend,ptr); }
+                if  (ptr<ptrend) { safecpy_char(dest,destend,EVCH_ASMSTRING); ptr+=2; }
             } while (ptr<ptrend);
             safecpy_end(dest,destend);
             return TRUE;
@@ -326,7 +323,7 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
         case TYPE_CSTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
             ptr=variant->cstring.begin; while(ptr<variant->cstring.end) {
-                if (ptr[0]!=CH_STRING_ESCAPE) { safecpy(dest,destend,ptr); }
+                if (ptr[0]!=EVCH_STRING_ESCAPE) { safecpy(dest,destend,ptr); }
                 else {
                     switch (ptr[1]) {
                         case 'a' : safecpy_char(dest,destend,0x07); ptr+=2; break; /* audible bell */
@@ -510,7 +507,7 @@ static const Variant* findVariantInMap(VariantMap* map, const utf8* stringKey) {
  */
 static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr) {
     const utf8 *last, *type; int base, value, digit; double fvalue, fdivisor;
-    assert( out_v!=NULL && (ptr!=NULL && *ptr!=CH_PARAM_SEP && *ptr!='\0') );
+    assert( out_v!=NULL && (ptr!=NULL && *ptr!=EVCH_PARAM_SEP && *ptr!='\0') );
     
     if ( !isliteral(*ptr) && *ptr!='.' ) { return FALSE; }
     base = 0;
@@ -518,11 +515,11 @@ static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr)
     /* try to recognize the prefix that define the number representation (base) */
     switch ( ptr[0] ) {
         /* differentiate the current address "$" from the hex prefix "$" */
-        case CH_HEXPREFIX_ADDR: if (ishex(ptr[1])) { base=16; ++ptr; }
-                                /* else               { (*out_value)=(theCurrAddress&0xFFFF); (*out_end)=ptr+1; return TRUE; } */
-                                break;
-        case CH_HEXPREFIX:      if (ishex(ptr[1])) { base=16; ++ptr; } break; /* < hex type defined with "$" */
-        case CH_BINPREFIX:      if (isbin(ptr[1])) { base= 2; ++ptr; } break; /* < bin type defined with "%" */
+        case EVCH_HEXPREFIX_ADDR: if (ishex(ptr[1])) { base=16; ++ptr; }
+                                  /* else               { (*out_value)=(theCurrAddress&0xFFFF); (*out_end)=ptr+1; return TRUE; } */
+                                  break;
+        case EVCH_HEXPREFIX:      if (ishex(ptr[1])) { base=16; ++ptr; } break; /* < hex type defined with "$" */
+        case EVCH_BINPREFIX:      if (isbin(ptr[1])) { base= 2; ++ptr; } break; /* < bin type defined with "%" */
     }
     /* find the last character */
     last=ptr; while ( isliteral(*last) || *last=='.' ) { ++last; } --last;
@@ -578,7 +575,7 @@ static Bool readOperator(const Operator** out_op, Bool precededByNumber, const u
     assert( out_op!=NULL && ptr!=NULL );
 
     firstchar = ptr[0];
-    if ( firstchar==CH_PARAM_SEP ) { return FALSE; }
+    if ( firstchar==EVCH_PARAM_SEP ) { return FALSE; }
     op = (precededByNumber ? BinaryOperators : UnaryOperators); while (op->str!=NULL) {
         if ( op->str[0]==firstchar ) {
             if ( op->str[1]==' '    ) { *out_op=op; if (out_endptr) { (*out_endptr)=ptr+1; } return TRUE; }
@@ -640,7 +637,7 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     const Operator* op; Variant variant, tmp; const Variant *variantRef;
     utf8 name[EV_MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL ); assert( out_end!=NULL );
-    assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
+    assert( *start!=EVCH_PARAM_SEP ); assert( *start!=EVCH_ENDOFFILE );
 
     err = 0;
     theVariant.type = TYPE_EMPTY;
@@ -648,38 +645,38 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     skipblankspaces(ptr);
     
     /*-- evaluate empty  ----------------------*/
-    if ( *ptr==CH_PARAM_SEP || isendofline(*ptr) ) {
+    if ( *ptr==EVCH_PARAM_SEP || isendofline(*ptr) ) {
         theVariant.empty.type = TYPE_EMPTY;
     }
     /*-- evaluate C string --------------------*/
-    else if ( *ptr==CH_CSTRING ) {
+    else if ( *ptr==EVCH_CSTRING ) {
         theVariant.cstring.type  = TYPE_CSTRING;
         theVariant.cstring.begin = ++ptr;
         do {
-            while ( !isendofcode(*ptr) && *ptr!=CH_CSTRING) { ++ptr; }
-            continueScanning = ptr[0]==CH_CSTRING && *(ptr-1)==CH_STRING_ESCAPE;
+            while ( !isendofcode(*ptr) && *ptr!=EVCH_CSTRING) { ++ptr; }
+            continueScanning = ptr[0]==EVCH_CSTRING && *(ptr-1)==EVCH_STRING_ESCAPE;
             if  (continueScanning) { ptr+=2; }
         } while (continueScanning);
         theVariant.cstring.end = ptr;
-        if (*ptr==CH_CSTRING) { ++ptr; }
+        if (*ptr==EVCH_CSTRING) { ++ptr; }
     }
     /*-- evaluate ASM string ------------------*/
-    else if ( *ptr==CH_ASMSTRING ) {
+    else if ( *ptr==EVCH_ASMSTRING ) {
         theVariant.astring.type  = TYPE_ASTRING;
         theVariant.astring.begin = ++ptr;
         do {
-            while ( !isendofcode(*ptr) && *ptr!=CH_ASMSTRING) { ++ptr; }
-            continueScanning = ptr[0]==CH_ASMSTRING && ptr[1]==CH_ASMSTRING;
+            while ( !isendofcode(*ptr) && *ptr!=EVCH_ASMSTRING) { ++ptr; }
+            continueScanning = ptr[0]==EVCH_ASMSTRING && ptr[1]==EVCH_ASMSTRING;
             if  (continueScanning) { ptr+=2; }
         } while (continueScanning);
         theVariant.astring.end = ptr;
-        if (*ptr==CH_ASMSTRING) { ++ptr; }
+        if (*ptr==EVCH_ASMSTRING) { ++ptr; }
     }
     /*-- evaluate expression ------------------*/
     else {
         cINITSTACK(opStack,   &OpSafeGuard, &OpSafeGuard);
         cINITSTACK(vStack,    EmptyVariant, EmptyVariant);
-        while (*ptr!=CH_PARAM_SEP && !isendofcode(*ptr)) {
+        while (*ptr!=EVCH_PARAM_SEP && !isendofcode(*ptr)) {
             precededByNumber=!opPushed; opPushed=FALSE;
             if (*ptr=='(') {
                 cPUSH(opStack,&OpParenthesis); opPushed=TRUE; ++ptr;
@@ -698,7 +695,7 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
                 variantRef = findVariantInMap(&theConstantsMap, name);
                 if (variantRef==NULL) {
-                    while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
+                    while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.type = TYPE_UNSOLVED;
                     theVariant.unsolved.end  = (*out_end) = ptr;
                     return &theVariant;
@@ -716,7 +713,7 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
         if (!err) { theVariant = cPOP(vStack); }
     }
 
-    while (*ptr!=CH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
+    while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
     (*out_end) = ptr;
     return &theVariant;
 }
