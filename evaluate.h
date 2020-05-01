@@ -1,11 +1,11 @@
 /**
- * @file       qeval.c
- * @date       Jan 39, 2020
+ * @file       evaluate.h
+ * @date       Jan 29, 2020
  * @author     Martin Rizzo | <martinrizzo@gmail.com>
  * @copyright  Copyright (c) 2020 Martin Rizzo.
  *             This project is released under the MIT License.
  * -------------------------------------------------------------------------
- *  QEVAL - Quick eval
+ *  Evaluate - A portable, one-header library to evaluate math expressions
  * -------------------------------------------------------------------------
  *  Copyright (c) 2020 Martin Rizzo
  *
@@ -34,24 +34,15 @@
 #include <string.h>
 #include <ctype.h>
 #include <assert.h>
-#define VERSION   "0.1"
-#define COPYRIGHT "Copyright (c) 2020 Martin Rizzo"
 
-#define MIN_FILE_SIZE        (0)           /* < minimum size for loadable files (in bytes)            */
-#define MAX_FILE_SIZE        (1024L*1024L) /* < maximum size for loadable files (in bytes)            */
-#define MAX_ERROR_COUNT      (32)          /* < maximum number of errors able to be reported          */
-#define MAX_NAME_LEN         (63)          /* < maximum length for names of vars (in bytes)           */
-#define MAX_ERRMSG_LEN       (63)          /* < maximum length for error messages (in bytes)          */
-#define MAX_ERRSTR_LEN       (63)          /* < maximum length for the optional error text (in bytes) */
-#define CALC_STACK_SIZE      (256)         /* < the calculator's stack size in number of elements     */
-#define PERMALLOC_CHUNK_SIZE (64*1024)     /* < size of each chunk of memory allocated by autoalloc   */
-#define MIN_PRECEDENCE       (1)           /* < the minimum valid operator predecence                 */
-#define NUMBER_OF_MAP_SLOTS  (77)          /* < number of slots used in the hashmap                   */
+#define EV_PERMALLOC_CHUNK_SIZE (64*1024)     /* < size of each chunk of memory allocated by autoalloc   */
+#define EV_MAX_NAME_LEN         (63)          /* < maximum length for names of vars (in bytes)           */
+#define EV_CALC_STACK_SIZE      (256)         /* < the calculator's stack size in number of elements     */
+#define EV_MIN_PRECEDENCE       (1)           /* < the minimum valid operator predecence                 */
+#define EV_NUMBER_OF_MAP_SLOTS  (77)          /* < number of slots used in the hashmap                   */
 
-
-
-typedef char           utf8;              /* < unicode variable width character encoding */
-typedef int Bool; enum { FALSE=0, TRUE }; /* < Boolean */
+typedef char utf8;                         /* < unicode variable width character encoding */
+typedef int Bool; enum { FALSE=0, TRUE };  /* < Boolean */
 
 
 /* some standard characters */
@@ -63,13 +54,13 @@ typedef enum StdChars_ {
     CH_OPTIONAL_DIREC_PREFIX = '.'
 } StdChars_;
 
-/* supported errors */
-typedef enum ErrorID_ {
-    ERR_NO_ERROR=0, ERR_FILE_NOT_FOUND=-1000, ERR_FILE_TOO_LARGE, ERR_CANNOT_READ_FILE, ERR_NOT_ENOUGH_MEMORY,
-    ERR_INT8_OUT_OF_RANGE,  ERR_INT16_OUT_OF_RANGE, ERR_BITNUM_OUT_OF_RANGE, ERR_INVALID_EXPRESSION,
-    ERR_INVALID_IMODE, ERR_UNEXPECTED_PTHESIS, ERR_TOO_MANY_OPEN_PTHESES, ERR_INVALID_RST_ADDRESS,
-    ERR_DISP_MUST_BE_ZERO, ERR_DISP_OUT_OF_RANGE, ERR_UNKNOWN_PARAM
-} ErrorID;
+/** evaluation error identifier */
+typedef enum EVERR {
+    EVERR_NO_ERROR=0,          EVERR_FILE_NOT_FOUND=-1000, EVERR_FILE_TOO_LARGE,     EVERR_CANNOT_READ_FILE,
+    EVERR_NOT_ENOUGH_MEMORY,   EVERR_INT8_OUT_OF_RANGE,    EVERR_INT16_OUT_OF_RANGE, EVERR_BITNUM_OUT_OF_RANGE,
+    EVERR_INVALID_EXPRESSION,  EVERR_INVALID_IMODE,        EVERR_UNEXPECTED_PTHESIS, EVERR_TOO_MANY_OPEN_PTHESES,
+    EVERR_INVALID_RST_ADDRESS, EVERR_DISP_MUST_BE_ZERO,    EVERR_DISP_OUT_OF_RANGE,  EVERR_UNKNOWN_PARAM
+} EVERR;
 
 
 /*=================================================================================================================*/
@@ -100,7 +91,7 @@ static int octvalue   (int ch) { return INRANGE(ch,'0','7') ? ch-'0' : -1; }
 /*=================================================================================================================*/
 #pragma mark - > PERMANENT DYNAMIC ALLOCATION
 
-typedef struct PermallocChunk { struct PermallocChunk* next; char data[PERMALLOC_CHUNK_SIZE]; } PermallocChunk;
+typedef struct PermallocChunk { struct PermallocChunk* next; char data[EV_PERMALLOC_CHUNK_SIZE]; } PermallocChunk;
 PermallocChunk* thePermallocChunk     = NULL;
 char*           thePermallocPtr       = NULL;
 int             thePermallocRemaining = 0;
@@ -116,7 +107,7 @@ static void* permalloc(int size) {
         prevPermallocChunk=thePermallocChunk; thePermallocChunk=malloc(sizeof(PermallocChunk));
         if (prevPermallocChunk) { prevPermallocChunk->next = thePermallocChunk; }
         thePermallocPtr       = thePermallocChunk->data;
-        thePermallocRemaining = PERMALLOC_CHUNK_SIZE;
+        thePermallocRemaining = EV_PERMALLOC_CHUNK_SIZE;
     }
     /* allocates the first 'size' bytes counting from 'thePermallocPtr' */
     ptr=thePermallocPtr; thePermallocPtr+=size; thePermallocRemaining-=size;
@@ -161,7 +152,7 @@ static void permallocFreeAll() {
 
 
 typedef struct QErrorLine { const utf8* permaPath; int number; struct QErrorLine* prev; } QErrorLine;
-typedef struct QError { ErrorID id; const utf8* str; QErrorLine line; struct QError* next; } QError;
+typedef struct QError { EVERR id; const utf8* str; QErrorLine line; struct QError* next; } QError;
 
 static QErrorLine* theCurErrorLine = NULL;
 QError*            theFirstQError  = NULL;
@@ -175,38 +166,38 @@ QError*            theLastQError   = NULL;
 
 /**
  * Reports a error
- * @param errorID  The error identifier, ex: ERR_CANNOT_READ_FILE
+ * @param everr    The evaluation error identifier, ex: EVERR_INVALID_EXPRESSION
  * @param str      The optional text attached to the error reported (it can be NULL)
  */
-static int qerror(ErrorID errorID, const utf8 *str) {
+static int qerror(EVERR everr, const utf8 *str) {
     const utf8* message; QError* newError;
-    switch (errorID) {
-        case ERR_NO_ERROR:             message = "SUCCESS"; break;
-        case ERR_FILE_NOT_FOUND:       message = "file not found";    break;
-        case ERR_FILE_TOO_LARGE:       message = "the file '$' is too large"; break;
-        case ERR_NOT_ENOUGH_MEMORY:    message = "not enough memory"; break;
-        case ERR_INT8_OUT_OF_RANGE:    message = "the 8-bit value is out of range"; break;
-        case ERR_INT16_OUT_OF_RANGE:   message = "the 16-bit value is out of range"; break;
-        case ERR_BITNUM_OUT_OF_RANGE:  message = "the bit number is out of range (valid range is: 0-7)"; break;
-        case ERR_INVALID_EXPRESSION:   message = "invalid expression"; break;
-        case ERR_INVALID_IMODE:        message = "invalid interruption mode"; break;
-        case ERR_UNEXPECTED_PTHESIS:   message = "unexpected ')' (closing parenthesis)"; break;
-        case ERR_TOO_MANY_OPEN_PTHESES:message = "too many open parentheses"; break;
-        case ERR_INVALID_RST_ADDRESS:  message = "invalid RST address"; break;
-        case ERR_DISP_MUST_BE_ZERO:    message = "no displacement can be added to the index register"; break;
-        case ERR_DISP_OUT_OF_RANGE:    message = "the displacement is out of range"; break;
-        case ERR_UNKNOWN_PARAM:        message = "unknown parameter"; break;
-        default:                       message = "unknown error";     break;
+    switch (everr) {
+        case EVERR_NO_ERROR:             message = "SUCCESS"; break;
+        case EVERR_FILE_NOT_FOUND:       message = "file not found";    break;
+        case EVERR_FILE_TOO_LARGE:       message = "the file '$' is too large"; break;
+        case EVERR_NOT_ENOUGH_MEMORY:    message = "not enough memory"; break;
+        case EVERR_INT8_OUT_OF_RANGE:    message = "the 8-bit value is out of range"; break;
+        case EVERR_INT16_OUT_OF_RANGE:   message = "the 16-bit value is out of range"; break;
+        case EVERR_BITNUM_OUT_OF_RANGE:  message = "the bit number is out of range (valid range is: 0-7)"; break;
+        case EVERR_INVALID_EXPRESSION:   message = "invalid expression"; break;
+        case EVERR_INVALID_IMODE:        message = "invalid interruption mode"; break;
+        case EVERR_UNEXPECTED_PTHESIS:   message = "unexpected ')' (closing parenthesis)"; break;
+        case EVERR_TOO_MANY_OPEN_PTHESES:message = "too many open parentheses"; break;
+        case EVERR_INVALID_RST_ADDRESS:  message = "invalid RST address"; break;
+        case EVERR_DISP_MUST_BE_ZERO:    message = "no displacement can be added to the index register"; break;
+        case EVERR_DISP_OUT_OF_RANGE:    message = "the displacement is out of range"; break;
+        case EVERR_UNKNOWN_PARAM:        message = "unknown parameter"; break;
+        default:                         message = "unknown error";     break;
     }
     newError = permalloc(sizeof(QError));
-    newError->id             = errorID;
+    newError->id             = everr;
     newError->line.permaPath = theCurErrorLine ? theCurErrorLine->permaPath : 0;
     newError->line.number    = theCurErrorLine ? theCurErrorLine->number    : 0;
     newError->str            = permalloc_stringreplace(message,'$',str);
     newError->next           = NULL;
     if (!theFirstQError) { theFirstQError=newError; }
     theLastQError = theLastQError ? (theLastQError->next=newError) : newError;
-    return errorID;
+    return everr;
 }
 
 static void qerrorBeginFile(const utf8* filePath) {
@@ -277,10 +268,10 @@ static const Operator BinaryOperators[19] = {
 };
 
 /** Special operator object used to mark parenthesis */
-static const Operator OpParenthesis = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
+static const Operator OpParenthesis = {OP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
 
 /** Special operator object used to mark limits in the evaluator stack */
-static const Operator OpSafeGuard   = {OP_INVALID,"",(MIN_PRECEDENCE-1)};
+static const Operator OpSafeGuard   = {OP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
 
 
 /*=================================================================================================================*/
@@ -489,15 +480,15 @@ static void addVariantToMap(VariantMap* map, const Variant* variantToAdd, const 
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     calculateHash(hash,tmp,stringKey);
-    if (map->slots==NULL) { map->slots=permalloc(NUMBER_OF_MAP_SLOTS*sizeof(VariantMapSlot)); }
-    addVariantToListKS(&map->slots[hash%NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
+    if (map->slots==NULL) { map->slots=permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(VariantMapSlot)); }
+    addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
 }
 
 static const Variant* findVariantInMap(VariantMap* map, const utf8* stringKey) {
     unsigned hash; VariantElement* element; unsigned char* tmp;
     assert( map!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     calculateHash(hash,tmp,stringKey);
-    element = map->slots ? map->slots[hash%NUMBER_OF_MAP_SLOTS].first : NULL;
+    element = map->slots ? map->slots[hash%EV_NUMBER_OF_MAP_SLOTS].first : NULL;
     while (element) {
         if ( 0==strcmp(element->key.string,stringKey) ) { return &element->variant; }
         element = element->next;
@@ -627,8 +618,8 @@ static Bool readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf8 *
 static VariantMap theConstantsMap = EmptyVariantMap;
 
 static Variant theVariant;
-struct { const Operator* array[CALC_STACK_SIZE]; int i; } opStack;
-struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
+struct { const Operator* array[EV_CALC_STACK_SIZE]; int i; } opStack;
+struct { Variant         array[EV_CALC_STACK_SIZE]; int i; } vStack;
 
 
 /** Macros to manage calculator's stacks */
@@ -647,7 +638,7 @@ struct { Variant         array[CALC_STACK_SIZE]; int i; } vStack;
 static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start; int err;
     const Operator* op; Variant variant, tmp; const Variant *variantRef;
-    utf8 name[MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
+    utf8 name[EV_MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=CH_PARAM_SEP ); assert( *start!=CH_ENDFILE );
 
@@ -694,8 +685,8 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
                 cPUSH(opStack,&OpParenthesis); opPushed=TRUE; ++ptr;
             }
             else if (*ptr==')') {
-                cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
-                if (cPOP(opStack)!=&OpParenthesis) { err=qerror(ERR_UNEXPECTED_PTHESIS,0); }
+                cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
+                if (cPOP(opStack)!=&OpParenthesis) { err=qerror(EVERR_UNEXPECTED_PTHESIS,0); }
                 ++ptr;
             }
             else if ( readOperator(&op,precededByNumber,ptr,&ptr) ) {
@@ -714,14 +705,14 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
                 }
                 cPUSH(vStack, (*variantRef));
             }
-            else { err=qerror(ERR_INVALID_EXPRESSION,0); }
+            else { err=qerror(EVERR_INVALID_EXPRESSION,0); }
             skipblankspaces(ptr);
         }
 
         /* process any pending operator before return */
-        if (!err) { cWHILE_PRECEDENCE(>=MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack); }
-        if (!err && cPEEK(opStack)==&OpParenthesis) { err=qerror(ERR_TOO_MANY_OPEN_PTHESES,0); }
-        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=qerror(ERR_INVALID_EXPRESSION,0); }
+        if (!err) { cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack); }
+        if (!err && cPEEK(opStack)==&OpParenthesis) { err=qerror(EVERR_TOO_MANY_OPEN_PTHESES,0); }
+        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=qerror(EVERR_INVALID_EXPRESSION,0); }
         if (!err) { theVariant = cPOP(vStack); }
     }
 
@@ -773,22 +764,26 @@ static void qPerformAllDeferredEvaluations(void) {
     PUBLIC FUNCTIONS
     ----------------
  
+        EVERR
+        EvVariant
+        EvDeferredVariant
+ 
         EVALUATION OF EXPRESSIONS
-            void     qAddConstant(..)
-            Variant* qEvaluateExpression(..)
-            Bool     qPrintAllErrors(..)
+            EvVariant* evAddConstant(name, EvVariant* value)
+            EvVariant* evEvaluateExpression(..)
  
         DEFERRED EVALUATIONS
-            void                 qDeferEvaluation(Variant*, userValue, userPtr);
-            void                 qPerformAllDeferredEvaluations();
-            QDeferredEvaluation* qGetFirstDeferredEvaluation( );
-            QDeferredEvaluation* qGetNextDeferredEvaluation( QDeferredEvaluation* );
+            EvDeferredVariant* evDeferVariant( EvVariant*, userValue, userPtr );
+            void               evEvaluateAllDeferredVariants( );
+            EvDeferredVariant* evGetFirstDeferredVariant( );
+            EvDeferredVariant* evGetNextDeferredVariant( EvDeferredVariant* );
 
-        ERROR REPORT EXTRA INFORMATION (optional)
-            Bool     qerror(ErrorID,str);
-            void     qerrorBeginFile(filePath);
-            void     qerrorEndFile();
-            void     qerrorSetLineNumber(lineNumber);
+        EVALUATION ERROR REPORT (optional)
+            Bool everr(EVERR,str);
+            void everrBeginFile(filePath);
+            void everrEndFile();
+            void everrSetLineNumber(lineNumber);
+            Bool everrPrintErrors(..)
 
  */
 

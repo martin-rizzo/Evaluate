@@ -1,4 +1,10 @@
-#include "qeval.h"
+#define EVALUATE_IMPLEMENTATION
+#include "evaluate.h"
+
+#define VERSION   "0.1"
+#define COPYRIGHT "Copyright (c) 2020 Martin Rizzo"
+#define MIN_FILE_SIZE        (0)           /* < minimum size for loadable files (in bytes)            */
+#define MAX_FILE_SIZE        (1024L*1024L) /* < maximum size for loadable files (in bytes)            */
 #define MAX_FILES 256  /* maximum number of files to evaluate */
 #define isOption(param,name1,name2) (strcmp(param,name1)==0 || strcmp(param,name2)==0)
 
@@ -46,17 +52,17 @@ static Bool evaluateFile(const utf8* filePath) {
     
     /* try to load the entire file to a buffer */
     if (!err) {
-        file=fopen(filePath,"rb"); if (!file) { err=qerror(ERR_FILE_NOT_FOUND,filePath); }
+        file=fopen(filePath,"rb"); if (!file) { err=qerror(EVERR_FILE_NOT_FOUND,filePath); }
     }
     if (!err) {
         fseek(file,0L,SEEK_END); fileSize=ftell(file); rewind(file);
-        if ( fileSize>MAX_FILE_SIZE ) { err=qerror(ERR_FILE_TOO_LARGE,filePath); }
+        if ( fileSize>MAX_FILE_SIZE ) { err=qerror(EVERR_FILE_TOO_LARGE,filePath); }
     }
     if (!err) {
-        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { err=qerror(ERR_NOT_ENOUGH_MEMORY,0); }
+        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { err=qerror(EVERR_NOT_ENOUGH_MEMORY,0); }
     }
     if (!err) {
-        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { err=qerror(ERR_CANNOT_READ_FILE,filePath); }
+        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { err=qerror(EVERR_CANNOT_READ_FILE,filePath); }
         else { fileBuffer[fileSize]=CH_ENDFILE; }
     }
     if (file) { fclose(file); }
