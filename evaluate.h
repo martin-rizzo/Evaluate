@@ -32,6 +32,12 @@
 #ifndef EVALUATE_H_INCLUDED
 #define EVALUATE_H_INCLUDED
 
+#ifdef NDEBUG
+#    define EVLOG(x)
+#else
+#    define EVLOG(x) printf x; printf("\n")
+#endif
+
 typedef char utf8;                         /* < unicode variable width character encoding */
 typedef int Bool; enum { FALSE=0, TRUE };  /* < Boolean */
 
@@ -155,25 +161,12 @@ static void permallocFreeAll() {
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
 
-#ifdef NDEBUG
-#    define QLOG(x)
-#else
-#    define QLOG(x) printf x; printf("\n")
-#endif
+typedef struct Ev_ErrorLine { const utf8* permaPath; int number; struct Ev_ErrorLine* prev;    } Ev_ErrorLine;
+typedef struct Ev_Error { EVERR id; const utf8* str; Ev_ErrorLine line; struct Ev_Error* next; } Ev_Error;
 
-
-typedef struct QErrorLine { const utf8* permaPath; int number; struct QErrorLine* prev; } QErrorLine;
-typedef struct QError { EVERR id; const utf8* str; QErrorLine line; struct QError* next; } QError;
-
-static QErrorLine* theCurErrorLine = NULL;
-QError*            theFirstQError  = NULL;
-QError*            theLastQError   = NULL;
-
-/**
- * Global var that indicates whether the program is being successfully executed.
- * It is TRUE while no error is reported.
- */
-/* #define success (theFirstError==NULL) */
+static Ev_ErrorLine* theCurErrorLine = NULL;
+static Ev_Error*     theFirstQError  = NULL;
+static Ev_Error*     theLastQError   = NULL;
 
 /**
  * Reports a error
@@ -181,7 +174,7 @@ QError*            theLastQError   = NULL;
  * @param str      The optional text attached to the error reported (it can be NULL)
  */
 int everr(EVERR everr, const utf8 *str) {
-    const utf8* message; QError* newError;
+    const utf8* message; Ev_Error* newError;
     switch (everr) {
         case EVERR_NO_ERROR:             message = "SUCCESS"; break;
         case EVERR_FILE_NOT_FOUND:       message = "file not found";    break;
@@ -200,7 +193,7 @@ int everr(EVERR everr, const utf8 *str) {
         case EVERR_UNKNOWN_PARAM:        message = "unknown parameter"; break;
         default:                         message = "unknown error";     break;
     }
-    newError = permalloc(sizeof(QError));
+    newError = permalloc(sizeof(Ev_Error));
     newError->id             = everr;
     newError->line.permaPath = theCurErrorLine ? theCurErrorLine->permaPath : 0;
     newError->line.number    = theCurErrorLine ? theCurErrorLine->number    : 0;
@@ -212,9 +205,9 @@ int everr(EVERR everr, const utf8 *str) {
 }
 
 void everrBeginFile(const utf8* filePath) {
-    QErrorLine* newErrorLine;
+    Ev_ErrorLine* newErrorLine;
     assert(filePath!=NULL);
-    newErrorLine = malloc(sizeof(QErrorLine));
+    newErrorLine = malloc(sizeof(Ev_ErrorLine));
     newErrorLine->permaPath = permalloc_stringreplace(filePath,0,0);
     newErrorLine->number    = 0;
     newErrorLine->prev      = theCurErrorLine;
@@ -222,7 +215,7 @@ void everrBeginFile(const utf8* filePath) {
 }
 
 void everrEndFile(const utf8* filePath) {
-    QErrorLine* prevErrorLine;
+    Ev_ErrorLine* prevErrorLine;
     assert( filePath!=NULL );
     assert( theCurErrorLine!=NULL && strcmp(theCurErrorLine->permaPath,filePath)==0 );
     prevErrorLine = theCurErrorLine->prev;
@@ -234,7 +227,7 @@ void everrSetLineNumber(int lineNumber) {
 }
 
 Bool everrPrintErrors(void) {
-    QError* error; const int column=0;
+    Ev_Error* error; const int column=0;
     for (error=theFirstQError; error; error=error->next) {
         if (error->line.permaPath!=NULL && error->line.number>0) {
             if (column>0) { printf("%s:%d:%d: ", error->line.permaPath, error->line.number, column); }
