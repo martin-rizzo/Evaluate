@@ -15,7 +15,7 @@
 static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
     Bool printByDefault = FALSE;
     Bool moreArguments;
-    Variant* variant;
+    EvVariant* variant;
     utf8 name[128], *dest, *destend;
 
     /* skip all blank spaces at the beginning of the line */
@@ -85,16 +85,16 @@ static Bool evaluateFile(const utf8* filePath) {
 }
 
 
-static void printVariant(const Variant* variant) {
+static void printVariant(const EvVariant* variant) {
     utf8 str[256];
-    switch (variant->type) {
-        case TYPE_EMPTY:    /* printf("<empty>"); */ break;
-        case TYPE_UNSOLVED: printf("<..?..>"); break;
-        case TYPE_INUMBER:  printf("%d",variant->inumber.value); break;
-        case TYPE_FNUMBER:  printf("%g",variant->fnumber.value); break;
-        case TYPE_ASTRING:
-        case TYPE_CSTRING:
-            variantToString(variant,str,sizeof(str)); printf("%s",str); break;
+    switch (variant->evtype) {
+        case EVTYPE_EMPTY:    /* printf("<empty>"); */ break;
+        case EVTYPE_UNSOLVED: printf("<..?..>"); break;
+        case EVTYPE_INUMBER:  printf("%d",variant->inumber.value); break;
+        case EVTYPE_FNUMBER:  printf("%g",variant->fnumber.value); break;
+        case EVTYPE_ASTRING:
+        case EVTYPE_CSTRING:
+            ev_variantToString(variant,str,sizeof(str)); printf("%s",str); break;
     }
 }
 

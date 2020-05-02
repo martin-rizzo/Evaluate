@@ -47,6 +47,23 @@ typedef enum EVERR {
     EVERR_NOT_ENOUGH_MEMORY,   EVERR_INVALID_EXPRESSION,   EVERR_UNEXPECTED_PTHESIS, EVERR_TOO_MANY_OPEN_PTHESES
 } EVERR;
 
+
+/** Identifier of the type of value contained in a EvVariant */
+typedef enum  EVTYPE { EVTYPE_UNSOLVED, EVTYPE_EMPTY, EVTYPE_ASTRING, EVTYPE_CSTRING, EVTYPE_INUMBER, EVTYPE_FNUMBER } EVTYPE;
+
+/** Union that can be used to represent any data type (integer number, float number, c-string, asm-string, etc... */
+typedef union EvVariant {
+    EVTYPE evtype;
+    struct { EVTYPE evtype;                          } empty;     /* < empty data             */
+    struct { EVTYPE evtype; int   value;             } inumber;   /* < integer number         */
+    struct { EVTYPE evtype; float value;             } fnumber;   /* < floating-point number  */
+    struct { EVTYPE evtype; const utf8 *begin, *end; } astring;   /* < assembler string       */
+    struct { EVTYPE evtype; const utf8 *begin, *end; } cstring;   /* < C string               */
+    struct { EVTYPE evtype; const utf8 *begin, *end; } unsolved;  /* < unsolved expression    */
+} EvVariant;
+
+
+
 extern int  everr(EVERR everr, const utf8 *str);
 extern void everrBeginFile(const utf8* filePath);
 extern void everrEndFile(const utf8* filePath);
@@ -163,8 +180,8 @@ typedef struct Ev_ErrorLine { const utf8* permaPath; int number; struct Ev_Error
 typedef struct Ev_Error { EVERR id; const utf8* str; Ev_ErrorLine line; struct Ev_Error* next; } Ev_Error;
 
 static Ev_ErrorLine* theCurErrorLine = NULL;
-static Ev_Error*     theFirstQError  = NULL;
-static Ev_Error*     theLastQError   = NULL;
+static Ev_Error*     theFirstError   = NULL;
+static Ev_Error*     theLastError    = NULL;
 
 /**
  * Reports a error
@@ -190,8 +207,8 @@ int everr(EVERR everr, const utf8 *str) {
     newError->line.number    = theCurErrorLine ? theCurErrorLine->number    : 0;
     newError->str            = permalloc_stringreplace(message,'$',str);
     newError->next           = NULL;
-    if (!theFirstQError) { theFirstQError=newError; }
-    theLastQError = theLastQError ? (theLastQError->next=newError) : newError;
+    if (!theFirstError) { theFirstError=newError; }
+    theLastError = theLastError ? (theLastError->next=newError) : newError;
     return everr;
 }
 
@@ -219,14 +236,14 @@ void everrSetLineNumber(int lineNumber) {
 
 Bool everrPrintErrors(void) {
     Ev_Error* error; const int column=0;
-    for (error=theFirstQError; error; error=error->next) {
+    for (error=theFirstError; error; error=error->next) {
         if (error->line.permaPath!=NULL && error->line.number>0) {
             if (column>0) { printf("%s:%d:%d: ", error->line.permaPath, error->line.number, column); }
             else          { printf("%s:%d: "   , error->line.permaPath, error->line.number);         }
         }
         printf("%s %s\n", "error:", error->str);
     }
-    return (theFirstQError!=NULL);
+    return (theFirstError!=NULL);
 }
 
 /*=================================================================================================================*/
@@ -274,43 +291,32 @@ static const Operator OpSafeGuard   = {OP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
 /*=================================================================================================================*/
 #pragma mark - > VARIANTS
 
-typedef enum   VariantType { TYPE_UNSOLVED, TYPE_EMPTY, TYPE_ASTRING, TYPE_CSTRING, TYPE_INUMBER, TYPE_FNUMBER } VariantType;
-typedef union  Variant {
-    VariantType type;
-    struct { VariantType type;                          } empty;     /* < empty data             */
-    struct { VariantType type; int   value;             } inumber;   /* < integer number         */
-    struct { VariantType type; float value;             } fnumber;   /* < floating-point number  */
-    struct { VariantType type; const utf8 *begin, *end; } astring;   /* < assembler string       */
-    struct { VariantType type; const utf8 *begin, *end; } cstring;   /* < C string               */
-    struct { VariantType type; const utf8 *begin, *end; } unsolved;  /* < unsolved expression    */
-} Variant;
+static const EvVariant theEmptyVariant = { EVTYPE_EMPTY };
 
-static const Variant EmptyVariant = { TYPE_EMPTY };
-
-static Bool variantToInt(const Variant* variant, int* i) {
-    switch( variant->type ) {
-        case TYPE_INUMBER: (*i)=variant->inumber.value;    return TRUE;
-        case TYPE_ASTRING: (*i)=variant->astring.begin[0]; return TRUE;
-        case TYPE_EMPTY:   return TRUE;
+static Bool ev_variantToInt(const EvVariant* variant, int* i) {
+    switch( variant->evtype ) {
+        case EVTYPE_INUMBER: (*i)=variant->inumber.value;    return TRUE;
+        case EVTYPE_ASTRING: (*i)=variant->astring.begin[0]; return TRUE;
+        case EVTYPE_EMPTY:   return TRUE;
         default: return FALSE;
     }
 }
 
-static Bool variantToFloat(const Variant* variant, float* f) {
-    switch( variant->type ) {
-        case TYPE_FNUMBER: (*f)=variant->fnumber.value;        return TRUE;
-        case TYPE_INUMBER: (*f)=(float)variant->inumber.value; return TRUE;
-        case TYPE_EMPTY:   return TRUE;
+static Bool ev_variantToFloat(const EvVariant* variant, float* f) {
+    switch( variant->evtype ) {
+        case EVTYPE_FNUMBER: (*f)=variant->fnumber.value;        return TRUE;
+        case EVTYPE_INUMBER: (*f)=(float)variant->inumber.value; return TRUE;
+        case EVTYPE_EMPTY:   return TRUE;
         default: return FALSE;
     }
 }
 
-static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize) {
+static Bool ev_variantToString(const EvVariant* variant, utf8* buffer, int bufferSize) {
     utf8 *dest, *destend; const utf8 *ptr, *ptrend; int ch, digit;
     assert( variant!=NULL && buffer!=NULL && bufferSize>0 );
-    switch (variant->type) {
+    switch (variant->evtype) {
             
-        case TYPE_ASTRING:
+        case EVTYPE_ASTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
             ptr=variant->astring.begin; ptrend=variant->astring.end;
             do {
@@ -320,7 +326,7 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
             safecpy_end(dest,destend);
             return TRUE;
 
-        case TYPE_CSTRING:
+        case EVTYPE_CSTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
             ptr=variant->cstring.begin; while(ptr<variant->cstring.end) {
                 if (ptr[0]!=EVCH_STRING_ESCAPE) { safecpy(dest,destend,ptr); }
@@ -365,10 +371,10 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
     }
 }
 
-#define return_INumber1(v,       op, right) v->type=TYPE_INUMBER; v->inumber.value=      op right; return 0
-#define return_INumber2(v, left, op, right) v->type=TYPE_INUMBER; v->inumber.value= left op right; return 1
-#define return_FNumber1(v,       op, right) v->type=TYPE_FNUMBER; v->fnumber.value=      op right; return 0
-#define return_FNumber2(v, left, op, right) v->type=TYPE_FNUMBER; v->fnumber.value= left op right; return 1
+#define ev_return_INumber1(v,       op, right) v->evtype=EVTYPE_INUMBER; v->inumber.value=      op right; return 0
+#define ev_return_INumber2(v, left, op, right) v->evtype=EVTYPE_INUMBER; v->inumber.value= left op right; return 1
+#define ev_return_FNumber1(v,       op, right) v->evtype=EVTYPE_FNUMBER; v->fnumber.value=      op right; return 0
+#define ev_return_FNumber2(v, left, op, right) v->evtype=EVTYPE_FNUMBER; v->fnumber.value= left op right; return 1
 
 /**
  * Calculates a simple mathematical operation between two variants applying the provided operator
@@ -377,28 +383,28 @@ static Bool variantToString(const Variant* variant, utf8* buffer, int bufferSize
  * @param[in]  operator   The operation to apply
  * @param[in]  right      A variant containing the right operand
  */
-static int calcOperation(Variant* v, const Variant* left, const Operator *operator, const Variant* right) {
+static int ev_calculate(EvVariant* v, const EvVariant* left, const Operator *operator, const EvVariant* right) {
     int intL,intR; float float1,float2;
     assert( operator!=NULL && left!=NULL && right!=NULL );
     
-    if ( variantToInt(right,&intR) && variantToInt(left,&intL) ) { switch(operator->id) {
-        case OP_PLUS : return_INumber1(v, +, intR);
-        case OP_MINUS: return_INumber1(v, -, intR);
-        case OP_NOT  : return_INumber1(v, ~, intR);
-        case OP_LNOT : return_INumber1(v, !, intR);
-        case OP_ADD  : return_INumber2(v, intL, +,intR); case OP_SUB: return_INumber2(v, intL, -,intR);
-        case OP_MUL  : return_INumber2(v, intL, *,intR); case OP_DIV: return_INumber2(v, intL, /,intR);
-        case OP_SHL  : return_INumber2(v, intL,<<,intR); case OP_SHR: return_INumber2(v, intL,>>,intR);
-        case OP_AND  : return_INumber2(v, intL, &,intR); case OP_OR:  return_INumber2(v, intL, |,intR);
-        case OP_XOR  : return_INumber2(v, intL, ^,intR); case OP_MOD: return_INumber2(v, intL, %,intR);
-        case OP_EQ   : return_INumber2(v, intL,==,intR); case OP_NE : return_INumber2(v, intL,!=,intR);
-        case OP_LT   : return_INumber2(v, intL,< ,intR); case OP_GT : return_INumber2(v, intL,> ,intR);
-        case OP_LE   : return_INumber2(v, intL,<=,intR); case OP_GE : return_INumber2(v, intL,>=,intR);
+    if ( ev_variantToInt(right,&intR) && ev_variantToInt(left,&intL) ) { switch(operator->id) {
+        case OP_PLUS : ev_return_INumber1(v, +, intR);
+        case OP_MINUS: ev_return_INumber1(v, -, intR);
+        case OP_NOT  : ev_return_INumber1(v, ~, intR);
+        case OP_LNOT : ev_return_INumber1(v, !, intR);
+        case OP_ADD  : ev_return_INumber2(v, intL, +,intR); case OP_SUB: ev_return_INumber2(v, intL, -,intR);
+        case OP_MUL  : ev_return_INumber2(v, intL, *,intR); case OP_DIV: ev_return_INumber2(v, intL, /,intR);
+        case OP_SHL  : ev_return_INumber2(v, intL,<<,intR); case OP_SHR: ev_return_INumber2(v, intL,>>,intR);
+        case OP_AND  : ev_return_INumber2(v, intL, &,intR); case OP_OR:  ev_return_INumber2(v, intL, |,intR);
+        case OP_XOR  : ev_return_INumber2(v, intL, ^,intR); case OP_MOD: ev_return_INumber2(v, intL, %,intR);
+        case OP_EQ   : ev_return_INumber2(v, intL,==,intR); case OP_NE : ev_return_INumber2(v, intL,!=,intR);
+        case OP_LT   : ev_return_INumber2(v, intL,< ,intR); case OP_GT : ev_return_INumber2(v, intL,> ,intR);
+        case OP_LE   : ev_return_INumber2(v, intL,<=,intR); case OP_GE : ev_return_INumber2(v, intL,>=,intR);
         default: assert(FALSE); break;
     } }
-    else if ( variantToFloat(left,&float1) && variantToFloat(right,&float2) ) { switch (operator->id) {
-        case OP_ADD: return_FNumber2(v, float1, +,float2); case OP_SUB: return_FNumber2(v, float1, -,float2);
-        case OP_MUL: return_FNumber2(v, float1, *,float2); case OP_DIV: return_FNumber2(v, float1, /,float2);
+    else if ( ev_variantToFloat(left,&float1) && ev_variantToFloat(right,&float2) ) { switch (operator->id) {
+        case OP_ADD: ev_return_FNumber2(v, float1, +,float2); case OP_SUB: ev_return_FNumber2(v, float1, -,float2);
+        case OP_MUL: ev_return_FNumber2(v, float1, *,float2); case OP_DIV: ev_return_FNumber2(v, float1, /,float2);
         default: assert(FALSE); break;
     } }
     (*v) = (*right);
@@ -416,7 +422,7 @@ static int calcOperation(Variant* v, const Variant* left, const Operator *operat
 #define EmptyVariantMap  { 0 }
 
 typedef struct VariantElement {
-    Variant variant; union { int integer; const utf8* string; } key;
+    EvVariant variant; union { int integer; const utf8* string; } key;
     struct VariantElement* next;
 } VariantElement;
 
@@ -425,16 +431,16 @@ typedef struct VariantList VariantMapSlot;
 typedef struct VariantMap  { VariantMapSlot* slots; } VariantMap;
 
 
-static void copyVariant(Variant* dest, const Variant* sour) {
+static void copyVariant(EvVariant* dest, const EvVariant* sour) {
     int length; utf8* begin;
     assert( dest!=NULL && sour!=NULL );
-    switch ( (dest->type=sour->type) ) {
-        case TYPE_EMPTY: break;
-        case TYPE_INUMBER: dest->inumber.value = sour->inumber.value; break;
-        case TYPE_FNUMBER: dest->fnumber.value = sour->fnumber.value; break;
-        case TYPE_ASTRING:
-        case TYPE_CSTRING:
-        case TYPE_UNSOLVED:
+    switch ( (dest->evtype=sour->evtype) ) {
+        case EVTYPE_EMPTY: break;
+        case EVTYPE_INUMBER: dest->inumber.value = sour->inumber.value; break;
+        case EVTYPE_FNUMBER: dest->fnumber.value = sour->fnumber.value; break;
+        case EVTYPE_ASTRING:
+        case EVTYPE_CSTRING:
+        case EVTYPE_UNSOLVED:
             length = (int)(sour->astring.end - sour->astring.begin);
             dest->astring.begin = (begin = permalloc(length+1));
             dest->astring.end   = begin + length;
@@ -459,7 +465,7 @@ static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, i
 }
 */
 
-static void addVariantToListKS(VariantList* list, const Variant* variantToAdd, const utf8* stringKey) {
+static void addVariantToListKS(VariantList* list, const EvVariant* variantToAdd, const utf8* stringKey) {
     VariantElement* element; int sizeofStringKey; utf8* copyofStringKey;
     assert( list!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     
@@ -473,7 +479,7 @@ static void addVariantToListKS(VariantList* list, const Variant* variantToAdd, c
     addVariantElementToList(list, element);
 }
 
-static void addVariantToMap(VariantMap* map, const Variant* variantToAdd, const utf8* stringKey) {
+static void addVariantToMap(VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey) {
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     calculateHash(hash,tmp,stringKey);
@@ -481,7 +487,7 @@ static void addVariantToMap(VariantMap* map, const Variant* variantToAdd, const 
     addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
 }
 
-static const Variant* findVariantInMap(VariantMap* map, const utf8* stringKey) {
+static const EvVariant* findVariantInMap(VariantMap* map, const utf8* stringKey) {
     unsigned hash; VariantElement* element; unsigned char* tmp;
     assert( map!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     calculateHash(hash,tmp,stringKey);
@@ -505,7 +511,7 @@ static const Variant* findVariantInMap(VariantMap* map, const utf8* stringKey) {
  * @returns
  *    FALSE when no value can be read because the string format does not match with an integer number
  */
-static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr) {
+static Bool readNumber(EvVariant* out_v, const utf8* ptr, const utf8** out_endptr) {
     const utf8 *last, *type; int base, value, digit; double fvalue, fdivisor;
     assert( out_v!=NULL && (ptr!=NULL && *ptr!=EVCH_PARAM_SEP && *ptr!='\0') );
     
@@ -548,13 +554,13 @@ static Bool readNumber(Variant* out_v, const utf8* ptr, const utf8** out_endptr)
         fvalue=(double)value; fdivisor=1.0;
         ++ptr; while ('0'<=*ptr && *ptr<='9') { fvalue = fvalue * 10.0 + (*ptr++ - '0'); fdivisor*=10.0; }
         if (*ptr=='.') { return FALSE; }
-        out_v->fnumber.type  = TYPE_FNUMBER;
-        out_v->fnumber.value = (float)(fvalue/fdivisor);
+        out_v->fnumber.evtype = EVTYPE_FNUMBER;
+        out_v->fnumber.value  = (float)(fvalue/fdivisor);
     }
     /* the number does not contain a dot (.), it's a integer */
     else {
-        out_v->inumber.type  = TYPE_INUMBER;
-        out_v->inumber.value = value;
+        out_v->inumber.evtype = EVTYPE_INUMBER;
+        out_v->inumber.value  = value;
     }
     /* everything ok!, return end pointer & value */
     while ( isliteral(*ptr) ) { ++ptr; }
@@ -614,9 +620,9 @@ static Bool readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf8 *
 
 static VariantMap theConstantsMap = EmptyVariantMap;
 
-static Variant theVariant;
+static EvVariant theVariant;
 struct { const Operator* array[EV_CALC_STACK_SIZE]; int i; } opStack;
-struct { Variant         array[EV_CALC_STACK_SIZE]; int i; } vStack;
+struct { EvVariant       array[EV_CALC_STACK_SIZE]; int i; } vStack;
 
 
 /** Macros to manage calculator's stacks */
@@ -632,26 +638,26 @@ struct { Variant         array[EV_CALC_STACK_SIZE]; int i; } vStack;
     while (cPEEK(oStack)->preced cond) { cEXECUTE(f,tmp,oStack,vStack); }
 
 
-static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
+static EvVariant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start; int err;
-    const Operator* op; Variant variant, tmp; const Variant *variantRef;
+    const Operator* op; EvVariant variant, tmp; const EvVariant *variantRef;
     utf8 name[EV_MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL ); assert( out_end!=NULL );
     assert( *start!=EVCH_PARAM_SEP ); assert( *start!=EVCH_ENDOFFILE );
 
     err = 0;
-    theVariant.type = TYPE_EMPTY;
+    theVariant.evtype = EVTYPE_EMPTY;
     theVariant.unsolved.begin = ptr;
     skipblankspaces(ptr);
     
     /*-- evaluate empty  ----------------------*/
     if ( *ptr==EVCH_PARAM_SEP || isendofline(*ptr) ) {
-        theVariant.empty.type = TYPE_EMPTY;
+        theVariant.empty.evtype = EVTYPE_EMPTY;
     }
     /*-- evaluate C string --------------------*/
     else if ( *ptr==EVCH_CSTRING ) {
-        theVariant.cstring.type  = TYPE_CSTRING;
-        theVariant.cstring.begin = ++ptr;
+        theVariant.cstring.evtype = EVTYPE_CSTRING;
+        theVariant.cstring.begin  = ++ptr;
         do {
             while ( !isendofcode(*ptr) && *ptr!=EVCH_CSTRING) { ++ptr; }
             continueScanning = ptr[0]==EVCH_CSTRING && *(ptr-1)==EVCH_STRING_ESCAPE;
@@ -662,8 +668,8 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     }
     /*-- evaluate ASM string ------------------*/
     else if ( *ptr==EVCH_ASMSTRING ) {
-        theVariant.astring.type  = TYPE_ASTRING;
-        theVariant.astring.begin = ++ptr;
+        theVariant.astring.evtype = EVTYPE_ASTRING;
+        theVariant.astring.begin  = ++ptr;
         do {
             while ( !isendofcode(*ptr) && *ptr!=EVCH_ASMSTRING) { ++ptr; }
             continueScanning = ptr[0]==EVCH_ASMSTRING && ptr[1]==EVCH_ASMSTRING;
@@ -674,20 +680,20 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     }
     /*-- evaluate expression ------------------*/
     else {
-        cINITSTACK(opStack,   &OpSafeGuard, &OpSafeGuard);
-        cINITSTACK(vStack,    EmptyVariant, EmptyVariant);
+        cINITSTACK( opStack,   &OpSafeGuard,    &OpSafeGuard    );
+        cINITSTACK( vStack,    theEmptyVariant, theEmptyVariant );
         while (*ptr!=EVCH_PARAM_SEP && !isendofcode(*ptr)) {
             precededByNumber=!opPushed; opPushed=FALSE;
             if (*ptr=='(') {
                 cPUSH(opStack,&OpParenthesis); opPushed=TRUE; ++ptr;
             }
             else if (*ptr==')') {
-                cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack);
+                cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, ev_calculate,tmp,opStack,vStack);
                 if (cPOP(opStack)!=&OpParenthesis) { err=everr(EVERR_UNEXPECTED_PTHESIS,0); }
                 ++ptr;
             }
             else if ( readOperator(&op,precededByNumber,ptr,&ptr) ) {
-                cWHILE_PRECEDENCE(>=op->preced, calcOperation,tmp,opStack,vStack);
+                cWHILE_PRECEDENCE(>=op->preced, ev_calculate,tmp,opStack,vStack);
                 cPUSH(opStack, op); opPushed=TRUE;
                 
             }
@@ -696,8 +702,8 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
                 variantRef = findVariantInMap(&theConstantsMap, name);
                 if (variantRef==NULL) {
                     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
-                    theVariant.unsolved.type = TYPE_UNSOLVED;
-                    theVariant.unsolved.end  = (*out_end) = ptr;
+                    theVariant.unsolved.evtype = EVTYPE_UNSOLVED;
+                    theVariant.unsolved.end    = (*out_end) = ptr;
                     return &theVariant;
                 }
                 cPUSH(vStack, (*variantRef));
@@ -707,7 +713,7 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
         }
 
         /* process any pending operator before return */
-        if (!err) { cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, calcOperation,tmp,opStack,vStack); }
+        if (!err) { cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, ev_calculate,tmp,opStack,vStack); }
         if (!err && cPEEK(opStack)==&OpParenthesis) { err=everr(EVERR_TOO_MANY_OPEN_PTHESES,0); }
         if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=everr(EVERR_INVALID_EXPRESSION,0); }
         if (!err) { theVariant = cPOP(vStack); }
@@ -718,7 +724,7 @@ static Variant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     return &theVariant;
 }
 
-static void qAddConstant(const utf8* name, const Variant* value) {
+static void qAddConstant(const utf8* name, const EvVariant* value) {
     addVariantToMap(&theConstantsMap, value, name);
 }
 
@@ -726,25 +732,24 @@ static void qAddConstant(const utf8* name, const Variant* value) {
 /*=================================================================================================================*/
 #pragma mark - > DEFERRED EVALUATIONS
 
-#define QEmptyList {0,0}
-#define q__AddToList(list,element) \
+#define ev_AddToList(list,element) \
     if ((list)->last) { (list)->last = ((list)->last->next = (element)); } \
     else              { (list)->last = ((list)->first      = (element)); }
 
 
-typedef struct QDeferredEvaluation { Variant variant; int userValue; void* userPtr; struct QDeferredEvaluation* next; } QDeferredEvaluation;
+typedef struct QDeferredEvaluation { EvVariant variant; int userValue; void* userPtr; struct QDeferredEvaluation* next; } QDeferredEvaluation;
 typedef struct QDeferredList { QDeferredEvaluation *first, *last; } QDeferredList;
 
-static QDeferredList theDeferredList = QEmptyList;
+static QDeferredList theDeferredList = {0,0};
 
 
-static void qDeferEvaluation(const Variant* variant, int userValue, void* userPtr) {
+static void qDeferEvaluation(const EvVariant* variant, int userValue, void* userPtr) {
     QDeferredEvaluation* evaluation;
     evaluation = permalloc(sizeof(QDeferredEvaluation));
     evaluation->userValue = userValue;
     evaluation->userPtr   = userPtr;
     copyVariant(&evaluation->variant, variant);
-    q__AddToList(&theDeferredList,evaluation);
+    ev_AddToList(&theDeferredList,evaluation);
 }
 
 static void qPerformAllDeferredEvaluations(void) {
@@ -763,6 +768,7 @@ static void qPerformAllDeferredEvaluations(void) {
  
         EVERR
         EvVariant
+        EvVariantType
         EvDeferredVariant
  
         EVALUATION OF EXPRESSIONS
