@@ -44,9 +44,7 @@ typedef int Bool; enum { FALSE=0, TRUE };  /* < Boolean */
 /** Identifier of errors generated during expression evaluation */
 typedef enum EVERR {
     EVERR_NO_ERROR=0,          EVERR_FILE_NOT_FOUND=-1000, EVERR_FILE_TOO_LARGE,     EVERR_CANNOT_READ_FILE,
-    EVERR_NOT_ENOUGH_MEMORY,   EVERR_INT8_OUT_OF_RANGE,    EVERR_INT16_OUT_OF_RANGE, EVERR_BITNUM_OUT_OF_RANGE,
-    EVERR_INVALID_EXPRESSION,  EVERR_INVALID_IMODE,        EVERR_UNEXPECTED_PTHESIS, EVERR_TOO_MANY_OPEN_PTHESES,
-    EVERR_INVALID_RST_ADDRESS, EVERR_DISP_MUST_BE_ZERO,    EVERR_DISP_OUT_OF_RANGE,  EVERR_UNKNOWN_PARAM
+    EVERR_NOT_ENOUGH_MEMORY,   EVERR_INVALID_EXPRESSION,   EVERR_UNEXPECTED_PTHESIS, EVERR_TOO_MANY_OPEN_PTHESES
 } EVERR;
 
 extern int  everr(EVERR everr, const utf8 *str);
@@ -179,18 +177,11 @@ int everr(EVERR everr, const utf8 *str) {
         case EVERR_NO_ERROR:             message = "SUCCESS"; break;
         case EVERR_FILE_NOT_FOUND:       message = "file not found";    break;
         case EVERR_FILE_TOO_LARGE:       message = "the file '$' is too large"; break;
+        case EVERR_CANNOT_READ_FILE:     message = "can not read file '$'"; break;
         case EVERR_NOT_ENOUGH_MEMORY:    message = "not enough memory"; break;
-        case EVERR_INT8_OUT_OF_RANGE:    message = "the 8-bit value is out of range"; break;
-        case EVERR_INT16_OUT_OF_RANGE:   message = "the 16-bit value is out of range"; break;
-        case EVERR_BITNUM_OUT_OF_RANGE:  message = "the bit number is out of range (valid range is: 0-7)"; break;
         case EVERR_INVALID_EXPRESSION:   message = "invalid expression"; break;
-        case EVERR_INVALID_IMODE:        message = "invalid interruption mode"; break;
         case EVERR_UNEXPECTED_PTHESIS:   message = "unexpected ')' (closing parenthesis)"; break;
         case EVERR_TOO_MANY_OPEN_PTHESES:message = "too many open parentheses"; break;
-        case EVERR_INVALID_RST_ADDRESS:  message = "invalid RST address"; break;
-        case EVERR_DISP_MUST_BE_ZERO:    message = "no displacement can be added to the index register"; break;
-        case EVERR_DISP_OUT_OF_RANGE:    message = "the displacement is out of range"; break;
-        case EVERR_UNKNOWN_PARAM:        message = "unknown parameter"; break;
         default:                         message = "unknown error";     break;
     }
     newError = permalloc(sizeof(Ev_Error));
