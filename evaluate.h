@@ -62,7 +62,17 @@ typedef union EvVariant {
     struct { EVTYPE evtype; const utf8 *begin, *end; } unsolved;  /* < unsolved expression    */
 } EvVariant;
 
+typedef struct EvDeferredVariant {
+    EvVariant                 variant;
+    int                       userValue;
+    void*                     userPtr;
+    struct EvDeferredVariant* next;
+} EvDeferredVariant;
 
+
+extern EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr);
+extern EvDeferredVariant* evGetFirstDeferredVariant(void);
+extern EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred);
 
 extern int  everr(EVERR everr, const utf8 *str);
 extern void everrBeginFile(const utf8* filePath);
@@ -737,28 +747,28 @@ static void qAddConstant(const utf8* name, const EvVariant* value) {
     else              { (list)->last = ((list)->first      = (element)); }
 
 
-typedef struct QDeferredEvaluation { EvVariant variant; int userValue; void* userPtr; struct QDeferredEvaluation* next; } QDeferredEvaluation;
-typedef struct QDeferredList { QDeferredEvaluation *first, *last; } QDeferredList;
+typedef struct Ev_DeferredList { EvDeferredVariant *first, *last; } Ev_DeferredList;
 
-static QDeferredList theDeferredList = {0,0};
+static Ev_DeferredList theDeferredList = {0,0};
 
-
-static void qDeferEvaluation(const EvVariant* variant, int userValue, void* userPtr) {
-    QDeferredEvaluation* evaluation;
-    evaluation = permalloc(sizeof(QDeferredEvaluation));
-    evaluation->userValue = userValue;
-    evaluation->userPtr   = userPtr;
-    copyVariant(&evaluation->variant, variant);
-    ev_AddToList(&theDeferredList,evaluation);
+EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr) {
+    EvDeferredVariant* deferred = permalloc(sizeof(EvDeferredVariant));
+    deferred->userValue = userValue;
+    deferred->userPtr   = userPtr;
+    copyVariant(&deferred->variant, variant);
+    ev_AddToList(&theDeferredList,deferred);
+    return deferred;
 }
 
-static void qPerformAllDeferredEvaluations(void) {
-    
+EvDeferredVariant* evGetFirstDeferredVariant(void) {
+    if (theFirstError!=NULL) { return NULL; }
+    /* TODO: evaluate all deferred variants! */
+    return theDeferredList.first;
 }
 
-#define qGetFirstDeferredEvaluation() (theDeferredList.first)
-
-#define qGetNextDeferredEvaluation(evaluation) (evaluation->next)
+EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred) {
+    return deferred->next;
+}
 
 
 /*=================================================================================================================*/
@@ -777,7 +787,7 @@ static void qPerformAllDeferredEvaluations(void) {
  
         DEFERRED EVALUATIONS
             EvDeferredVariant* evDeferVariant( EvVariant*, userValue, userPtr );
-            void               evEvaluateAllDeferredVariants( );
+            void               evEvaluateDeferredVariants( );
             EvDeferredVariant* evGetFirstDeferredVariant( );
             EvDeferredVariant* evGetNextDeferredVariant( EvDeferredVariant* );
 

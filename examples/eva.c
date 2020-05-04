@@ -37,7 +37,7 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
         moreArguments=TRUE; while(moreArguments) {
             variant       = qEvaluateExpression(ptr,&ptr);
             moreArguments = (*ptr==EVCH_PARAM_SEP); if (moreArguments) { ++ptr; }
-            qDeferEvaluation(variant, !moreArguments, NULL);
+            evDeferVariant(variant, !moreArguments, NULL);
         }
     }
 
@@ -85,8 +85,11 @@ static Bool evaluateFile(const utf8* filePath) {
 }
 
 
-static void printVariant(const EvVariant* variant) {
-    utf8 str[256];
+static void printLine(const EvDeferredVariant* deferred) {
+    utf8 str[256]; const EvVariant* variant;
+    assert( deferred!=NULL );
+    
+    variant = &deferred->variant;
     switch (variant->evtype) {
         case EVTYPE_EMPTY:    /* printf("<empty>"); */ break;
         case EVTYPE_UNSOLVED: printf("<..?..>"); break;
@@ -96,11 +99,13 @@ static void printVariant(const EvVariant* variant) {
         case EVTYPE_CSTRING:
             ev_variantToString(variant,str,sizeof(str)); printf("%s",str); break;
     }
+    printf(deferred->userValue==1 ? "\n" : " ");
 }
 
 
+
 int main(int argc, char *argv[]) {
-    int i; QDeferredEvaluation* evaluation;
+    int i; EvDeferredVariant* deferred;
     const utf8 *param;
     const utf8 *help[] = {
         "USAGE: qeval [options] file-to-evaluate","",
@@ -127,16 +132,14 @@ int main(int argc, char *argv[]) {
     if ( printVersionAndExit ) { printf("QEVAL version %s\n%s\n", VERSION, COPYRIGHT);    return 0; }
     
     /* evaluate any file provided in the command line */
-    if (numberOfFiles>0) {
-        for (i=0; i<numberOfFiles; ++i) { evaluateFile(filePaths[i]);  }
-        if (!everrPrintErrors()) {
-            qPerformAllDeferredEvaluations();
-            for ( evaluation=qGetFirstDeferredEvaluation(); evaluation; evaluation=qGetNextDeferredEvaluation(evaluation) ) {
-                printVariant(&evaluation->variant);
-                printf(evaluation->userValue==1 ? "\n" : " ");
-            }
-        }
+    for (i=0; i<numberOfFiles; ++i) {
+        evaluateFile(filePaths[i]);
     }
+    /* print all lines stored as deferred variants */
+    for ( deferred=evGetFirstDeferredVariant(); deferred; deferred=evGetNextDeferredVariant(deferred) ) {
+        printLine(deferred);
+    }
+    everrPrintErrors();
     permallocFreeAll();
     return 0;
 }
