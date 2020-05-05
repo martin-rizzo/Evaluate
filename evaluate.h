@@ -151,10 +151,6 @@ typedef struct Ev_PermallocContext {
     int                remaining;
 } Ev_PermallocContext;
 
-
-static Ev_PermallocContext* thePermalloc = NULL;
-
-
 #define CTX(x) ctx->x
 
 static Ev_PermallocContext* ev_permallocInit() {
@@ -221,13 +217,14 @@ static void ev_permallocDealloc(Ev_PermallocContext* ctx) {
 typedef struct Ev_ErrorLine { const utf8* permaPath; int number; struct Ev_ErrorLine* prev;    } Ev_ErrorLine;
 typedef struct Ev_Error { EVERR id; const utf8* str; Ev_ErrorLine line; struct Ev_Error* next; } Ev_Error;
 
-typedef struct Ev_Ctx {
-    Ev_ErrorLine* curErrorLine;
-    Ev_Error*     firstError;
-    Ev_Error*     lastError;
-} Ev_Ctx;
+typedef struct Ev_Context {
+    Ev_PermallocContext* permactx;
+    Ev_ErrorLine*        curErrorLine;
+    Ev_Error*            firstError;
+    Ev_Error*            lastError;
+} Ev_Context;
 
-#define CTX(member) ((Ev_Ctx*)ctx)->member
+#define CTX(member) ((Ev_Context*)ctx)->member
 
 
 /**
@@ -249,11 +246,11 @@ int evErr(EVERR everr, const utf8 *str, EVCTX* ctx) {
         case EVERR_TOO_MANY_OPEN_PTHESES:message = "too many open parentheses"; break;
         default:                         message = "unknown error";     break;
     }
-    newError = ev_permalloc(sizeof(Ev_Error), thePermalloc);
+    newError = ev_permalloc(sizeof(Ev_Error), CTX(permactx));
     newError->id             = everr;
     newError->line.permaPath = CTX(curErrorLine) ? CTX(curErrorLine)->permaPath : 0;
     newError->line.number    = CTX(curErrorLine) ? CTX(curErrorLine)->number    : 0;
-    newError->str            = ev_permallocString(message,'$',str,thePermalloc);
+    newError->str            = ev_permallocString(message,'$',str,CTX(permactx));
     newError->next           = NULL;
     if (!CTX(firstError)) { CTX(firstError)=newError; }
     CTX(lastError) = CTX(lastError) ? (CTX(lastError)->next=newError) : newError;
@@ -264,7 +261,7 @@ void evErrBeginFile(const utf8* filePath, EVCTX* ctx) {
     Ev_ErrorLine* newErrorLine;
     assert( filePath!=NULL && ctx!=NULL );
     newErrorLine = malloc(sizeof(Ev_ErrorLine));
-    newErrorLine->permaPath = ev_permallocString(filePath,0,0,thePermalloc);
+    newErrorLine->permaPath = ev_permallocString(filePath,0,0,CTX(permactx));
     newErrorLine->number    = 0;
     newErrorLine->prev      = CTX(curErrorLine);
     CTX(curErrorLine) = newErrorLine;
@@ -478,9 +475,9 @@ typedef struct Ev_VariantList Ev_VariantMapSlot;
 typedef struct Ev_VariantMap  { Ev_VariantMapSlot* slots; } VariantMap;
 
 
-static void ev_copyVariant(EvVariant* dest, const EvVariant* sour) {
+static void ev_copyVariant(EvVariant* dest, const EvVariant* sour, EVCTX* ctx) {
     int length; utf8* begin;
-    assert( dest!=NULL && sour!=NULL );
+    assert( dest!=NULL && sour!=NULL && ctx!=NULL );
     switch ( (dest->evtype=sour->evtype) ) {
         case EVTYPE_EMPTY: break;
         case EVTYPE_INUMBER: dest->inumber.value = sour->inumber.value; break;
@@ -489,7 +486,7 @@ static void ev_copyVariant(EvVariant* dest, const EvVariant* sour) {
         case EVTYPE_CSTRING:
         case EVTYPE_UNSOLVED:
             length = (int)(sour->astring.end - sour->astring.begin);
-            dest->astring.begin = (begin = ev_permalloc(length+1,thePermalloc));
+            dest->astring.begin = (begin = ev_permalloc(length+1,CTX(permactx)));
             dest->astring.end   = begin + length;
             memcpy(begin, sour->astring.begin, length); begin[length]='\0';
             break;
@@ -501,26 +498,26 @@ static void ev_addVariantElementToList(Ev_VariantList* list, Ev_VariantElement* 
     else            { list->last = (list->first = elementToAdd);      }
 }
 
-static void ev_addVariantToListKS(Ev_VariantList* list, const EvVariant* variantToAdd, const utf8* stringKey) {
+static void ev_addVariantToListKS(Ev_VariantList* list, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
     Ev_VariantElement* element; int sizeofStringKey; utf8* copyofStringKey;
-    assert( list!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
+    assert( list!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' && ctx!=NULL );
     
     sizeofStringKey = (int)strlen(stringKey)+1;
-    copyofStringKey = ev_permalloc(sizeofStringKey,thePermalloc);
+    copyofStringKey = ev_permalloc(sizeofStringKey,CTX(permactx));
     memcpy(copyofStringKey, stringKey, sizeofStringKey);
     
-    element             = ev_permalloc(sizeof(Ev_VariantElement),thePermalloc);
+    element             = ev_permalloc(sizeof(Ev_VariantElement),CTX(permactx));
     element->key.string = copyofStringKey;
-    ev_copyVariant(&element->variant, variantToAdd);
+    ev_copyVariant(&element->variant, variantToAdd, ctx);
     ev_addVariantElementToList(list, element);
 }
 
-static void ev_addVariantToMap(VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey) {
+static void ev_addVariantToMap(VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     ev_calculateHash(hash,tmp,stringKey);
-    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantMapSlot),thePermalloc); }
-    ev_addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
+    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantMapSlot),CTX(permactx)); }
+    ev_addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey, ctx);
 }
 
 static const EvVariant* ev_findVariantInMap(VariantMap* map, const utf8* stringKey) {
@@ -763,25 +760,25 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX*
 
 void evAddConstant(const utf8* name, const EvVariant* value, EVCTX* ctx) {
     assert( name!=NULL && value!=NULL && ctx!=NULL );
-    ev_addVariantToMap(&theConstantsMap, value, name);
+    ev_addVariantToMap(&theConstantsMap, value, name, ctx);
 }
 
 /*=================================================================================================================*/
 #pragma mark - > CREATION / DESTRUCTION
 
 EVCTX* evCreateContext(void) {
-    Ev_Ctx* ctx = malloc(sizeof(Ev_Ctx));
-    ctx->curErrorLine = NULL;
-    ctx->firstError   = NULL;
-    ctx->lastError    = NULL;
-    thePermalloc = ev_permallocInit();
+    Ev_Context* ctx = malloc(sizeof(Ev_Context));
+    CTX(permactx)     = ev_permallocInit();
+    CTX(curErrorLine) = NULL;
+    CTX(firstError)   = NULL;
+    CTX(lastError)    = NULL;
     return ctx;
 }
 
 void evDestroyContext(EVCTX* ctx) {
     if (ctx==NULL) { return; }
-    ev_permallocDealloc(thePermalloc);
-    free((Ev_Ctx*)ctx);
+    ev_permallocDealloc(CTX(permactx));
+    free((Ev_Context*)ctx);
 }
 
 
@@ -800,10 +797,10 @@ static Ev_DeferredList theDeferredList = {0,0};
 EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx) {
     EvDeferredVariant* deferred;
     assert( variant!=NULL && ctx!=NULL );
-    deferred = ev_permalloc(sizeof(EvDeferredVariant),thePermalloc);
+    deferred = ev_permalloc(sizeof(EvDeferredVariant),CTX(permactx));
     deferred->userValue = userValue;
     deferred->userPtr   = userPtr;
-    ev_copyVariant(&deferred->variant, variant);
+    ev_copyVariant(&deferred->variant, variant, ctx);
     ev_addToList(&theDeferredList,deferred);
     return deferred;
 }
