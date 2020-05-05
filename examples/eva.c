@@ -119,6 +119,9 @@ int main(int argc, char *argv[]) {
     Bool printHelpAndExit    = argc<=1;
     Bool printVersionAndExit = FALSE;
     const utf8 *filePaths[MAX_FILES]; memset(filePaths,0,sizeof(filePaths));
+    
+    evCreateContext();
+    
     /* process all parameters */
     for (i=1; i<argc; ++i) { param=argv[i];
         if ( param[0]!='-' ) { if (numberOfFiles<MAX_FILES) { filePaths[numberOfFiles++]=param; } }
@@ -140,7 +143,7 @@ int main(int argc, char *argv[]) {
         printLine(deferred);
     }
     everrPrintErrors();
-    ev_permallocFreeAll();
+    evDestroyContext();
     return 0;
 }
 

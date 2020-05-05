@@ -70,6 +70,9 @@ typedef struct EvDeferredVariant {
 } EvDeferredVariant;
 
 
+extern void evCreateContext(void);
+extern void evDestroyContext(void);
+
 extern EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr);
 extern EvDeferredVariant* evGetFirstDeferredVariant(void);
 extern EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred);
@@ -138,25 +141,41 @@ typedef struct Ev_PermallocChunk {
     char                      data[EV_PERMALLOC_CHUNK_SIZE];
 } Ev_PermallocChunk;
 
-Ev_PermallocChunk* thePermallocChunk     = NULL;
-char*              thePermallocPtr       = NULL;
-int                thePermallocRemaining = 0;
+typedef struct Ev_PermallocContext {
+    Ev_PermallocChunk* chunk;
+    char*              ptr;
+    int                remaining;
+} Ev_PermallocContext;
+
+
+Ev_PermallocContext* thePermalloc = NULL;
+
+
+#define CTX(x) ctx->x
+
+static Ev_PermallocContext* ev_permallocInit() {
+    Ev_PermallocContext* ctx = malloc(sizeof(Ev_PermallocContext));
+    CTX(chunk)     = NULL;
+    CTX(ptr)       = NULL;
+    CTX(remaining) = 0;
+    return ctx;
+}
 
 /**
  * Allocates a block of memory that stays valid until the end of the program
  * @param size The size of the memory block to alloc, in bytes
  * @return     A pointer to the beginning of the block
  */
-static void* ev_permalloc(int size) {
+static void* ev_permalloc(int size, Ev_PermallocContext* ctx) {
     Ev_PermallocChunk* prevPermallocChunk; void* ptr;
-    if (thePermallocRemaining<size) {
-        prevPermallocChunk=thePermallocChunk; thePermallocChunk=malloc(sizeof(Ev_PermallocChunk));
-        if (prevPermallocChunk) { prevPermallocChunk->next = thePermallocChunk; }
-        thePermallocPtr       = thePermallocChunk->data;
-        thePermallocRemaining = EV_PERMALLOC_CHUNK_SIZE;
+    if ( CTX(remaining)<size ) {
+        prevPermallocChunk=CTX(chunk); CTX(chunk)=malloc(sizeof(Ev_PermallocChunk));
+        if (prevPermallocChunk) { prevPermallocChunk->next = CTX(chunk); }
+        CTX(ptr)       = CTX(chunk)->data;
+        CTX(remaining) = EV_PERMALLOC_CHUNK_SIZE;
     }
     /* allocates the first 'size' bytes counting from 'thePermallocPtr' */
-    ptr=thePermallocPtr; thePermallocPtr+=size; thePermallocRemaining-=size;
+    ptr=CTX(ptr); CTX(ptr)+=size; CTX(remaining)-=size;
     return ptr;
 }
 
@@ -168,11 +187,11 @@ static void* ev_permalloc(int size) {
  * @param charToReplace  The character to be replaced
  * @param replacement    The string that replaces the found character (optional, can be NULL)
  */
-static const utf8* ev_permallocString(const utf8* string, int charToReplace, const utf8* replacement) {
+static const utf8* ev_permallocString(const utf8* string, int charToReplace, const utf8* replacement, Ev_PermallocContext* ctx) {
     utf8 *buffer, *dest; const utf8 *ptr=string;
     assert( string!=NULL );
     
-    dest = buffer = ev_permalloc( (int)strlen(string) + (replacement!=NULL ? (int)strlen(replacement) : 0) + 1 );
+    dest = buffer = ev_permalloc( (int)strlen(string) + (replacement!=NULL ? (int)strlen(replacement) : 0) + 1, ctx);
     ptr=string; while (*ptr!='\0' && *ptr!=charToReplace) { *dest++=*ptr++; }
     if (*ptr==charToReplace && replacement!=NULL) { ++ptr; while (*replacement!='\0') { *dest++=*replacement++; } }
     while (*ptr!='\0') { *dest++=*ptr++; }
@@ -182,10 +201,11 @@ static const utf8* ev_permallocString(const utf8* string, int charToReplace, con
 /**
  * Deallocates all memory that previously was allocated with 'permalloc(..)'
  */
-static void ev_permallocFreeAll() {
+static void ev_permallocDealloc(Ev_PermallocContext* ctx) {
     Ev_PermallocChunk *chunk, *nextChunk=NULL;
-    for (chunk=thePermallocChunk; chunk; chunk=nextChunk) { nextChunk=chunk->next; free(chunk); }
-    thePermallocPtr=NULL; thePermallocChunk=NULL; thePermallocRemaining=0;
+    if (ctx==NULL) { return; }
+    for (chunk=CTX(chunk); chunk; chunk=nextChunk) { nextChunk=chunk->next; free(chunk); }
+    free(ctx);
 }
 
 
@@ -217,11 +237,11 @@ int everr(EVERR everr, const utf8 *str) {
         case EVERR_TOO_MANY_OPEN_PTHESES:message = "too many open parentheses"; break;
         default:                         message = "unknown error";     break;
     }
-    newError = ev_permalloc(sizeof(Ev_Error));
+    newError = ev_permalloc(sizeof(Ev_Error), thePermalloc);
     newError->id             = everr;
     newError->line.permaPath = theCurErrorLine ? theCurErrorLine->permaPath : 0;
     newError->line.number    = theCurErrorLine ? theCurErrorLine->number    : 0;
-    newError->str            = ev_permallocString(message,'$',str);
+    newError->str            = ev_permallocString(message,'$',str,thePermalloc);
     newError->next           = NULL;
     if (!theFirstError) { theFirstError=newError; }
     theLastError = theLastError ? (theLastError->next=newError) : newError;
@@ -232,7 +252,7 @@ void everrBeginFile(const utf8* filePath) {
     Ev_ErrorLine* newErrorLine;
     assert(filePath!=NULL);
     newErrorLine = malloc(sizeof(Ev_ErrorLine));
-    newErrorLine->permaPath = ev_permallocString(filePath,0,0);
+    newErrorLine->permaPath = ev_permallocString(filePath,0,0,thePermalloc);
     newErrorLine->number    = 0;
     newErrorLine->prev      = theCurErrorLine;
     theCurErrorLine = newErrorLine;
@@ -458,7 +478,7 @@ static void copyVariant(EvVariant* dest, const EvVariant* sour) {
         case EVTYPE_CSTRING:
         case EVTYPE_UNSOLVED:
             length = (int)(sour->astring.end - sour->astring.begin);
-            dest->astring.begin = (begin = ev_permalloc(length+1));
+            dest->astring.begin = (begin = ev_permalloc(length+1,thePermalloc));
             dest->astring.end   = begin + length;
             memcpy(begin, sour->astring.begin, length); begin[length]='\0';
             break;
@@ -486,10 +506,10 @@ static void addVariantToListKS(VariantList* list, const EvVariant* variantToAdd,
     assert( list!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     
     sizeofStringKey = (int)strlen(stringKey)+1;
-    copyofStringKey = ev_permalloc(sizeofStringKey);
+    copyofStringKey = ev_permalloc(sizeofStringKey,thePermalloc);
     memcpy(copyofStringKey, stringKey, sizeofStringKey);
     
-    element             = ev_permalloc(sizeof(VariantElement));
+    element             = ev_permalloc(sizeof(VariantElement),thePermalloc);
     element->key.string = copyofStringKey;
     copyVariant(&element->variant, variantToAdd);
     addVariantElementToList(list, element);
@@ -499,7 +519,7 @@ static void addVariantToMap(VariantMap* map, const EvVariant* variantToAdd, cons
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     calculateHash(hash,tmp,stringKey);
-    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(VariantMapSlot)); }
+    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(VariantMapSlot),thePermalloc); }
     addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
 }
 
@@ -744,6 +764,17 @@ static void qAddConstant(const utf8* name, const EvVariant* value) {
     addVariantToMap(&theConstantsMap, value, name);
 }
 
+/*=================================================================================================================*/
+#pragma mark - > CREATION / DESTRUCTION
+
+void evCreateContext(void) {
+    thePermalloc = ev_permallocInit();
+}
+
+void evDestroyContext(void) {
+    ev_permallocDealloc(thePermalloc);
+}
+
 
 /*=================================================================================================================*/
 #pragma mark - > DEFERRED EVALUATIONS
@@ -758,7 +789,7 @@ typedef struct Ev_DeferredList { EvDeferredVariant *first, *last; } Ev_DeferredL
 static Ev_DeferredList theDeferredList = {0,0};
 
 EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr) {
-    EvDeferredVariant* deferred = ev_permalloc(sizeof(EvDeferredVariant));
+    EvDeferredVariant* deferred = ev_permalloc(sizeof(EvDeferredVariant),thePermalloc);
     deferred->userValue = userValue;
     deferred->userPtr   = userPtr;
     copyVariant(&deferred->variant, variant);
@@ -787,6 +818,10 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred) {
         EvVariantType
         EvDeferredVariant
  
+        CREATION / DESTRUCTION
+            evCreateContext( );
+            evDestroyContext( );
+ 
         EVALUATION OF EXPRESSIONS
             EvVariant* evAddConstant(name, EvVariant* value)
             EvVariant* evEvaluateExpression(..)
@@ -798,11 +833,11 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred) {
             EvDeferredVariant* evGetNextDeferredVariant( EvDeferredVariant* );
 
         EVALUATION ERROR REPORT (optional)
-            Bool everr(EVERR,str);
-            void everrBeginFile(filePath);
-            void everrEndFile();
-            void everrSetLineNumber(lineNumber);
-            Bool everrPrintErrors(..)
+            Bool evErr(EVERR,str);
+            void evErrBeginFile(filePath);
+            void evErrEndFile();
+            void evErrSetLineNumber(lineNumber);
+            Bool evErrPrintErrors(..)
 
  */
 
