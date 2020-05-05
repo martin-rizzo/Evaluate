@@ -148,7 +148,7 @@ typedef struct Ev_PermallocContext {
 } Ev_PermallocContext;
 
 
-Ev_PermallocContext* thePermalloc = NULL;
+static Ev_PermallocContext* thePermalloc = NULL;
 
 
 #define CTX(x) ctx->x
@@ -523,7 +523,7 @@ static const EvVariant* ev_findVariantInMap(VariantMap* map, const utf8* stringK
 
 
 /*=================================================================================================================*/
-#pragma mark - > READING ELEMENTS FROM THE TEXT buffer
+#pragma mark - > READING ELEMENTS FROM THE TEXT BUFFER
 
 /**
  * Try to read the value of a integer literal
@@ -533,7 +533,7 @@ static const EvVariant* ev_findVariantInMap(VariantMap* map, const utf8* stringK
  * @returns
  *    FALSE when no value can be read because the string format does not match with an integer number
  */
-static Bool readNumber(EvVariant* out_v, const utf8* ptr, const utf8** out_endptr) {
+static Bool ev_readNumber(EvVariant* out_v, const utf8* ptr, const utf8** out_endptr) {
     const utf8 *last, *type; int base, value, digit; double fvalue, fdivisor;
     assert( out_v!=NULL && (ptr!=NULL && *ptr!=EVCH_PARAM_SEP && *ptr!='\0') );
     
@@ -598,7 +598,7 @@ static Bool readNumber(EvVariant* out_v, const utf8* ptr, const utf8** out_endpt
  * @returns
  *    FALSE when no operator can be read because the string format does not match with any known operator
  */
-static Bool readOperator(const Operator** out_op, Bool precededByNumber, const utf8* ptr, const utf8** out_endptr) {
+static Bool ev_readOperator(const Operator** out_op, Bool precededByNumber, const utf8* ptr, const utf8** out_endptr) {
     const Operator* op; int firstchar;
     assert( out_op!=NULL && ptr!=NULL );
 
@@ -622,7 +622,7 @@ static Bool readOperator(const Operator** out_op, Bool precededByNumber, const u
  * @param[in]  ptr        pointer to the string to read
  * @param[out] out_end    (output) returns a pointer to the next char to read immediately after the label
  */
-static Bool readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf8 **out_end) {
+static Bool ev_readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf8 **out_end) {
     utf8 *dest, *destend;
     assert( ptr!=NULL && out_end!=NULL && buffer!=NULL && bufferSize>0 );
     
@@ -714,13 +714,13 @@ static EvVariant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) 
                 if (cPOP(opStack)!=&OpParenthesis) { err=everr(EVERR_UNEXPECTED_PTHESIS,0); }
                 ++ptr;
             }
-            else if ( readOperator(&op,precededByNumber,ptr,&ptr) ) {
+            else if ( ev_readOperator(&op,precededByNumber,ptr,&ptr) ) {
                 cWHILE_PRECEDENCE(>=op->preced, ev_calculate,tmp,opStack,vStack);
                 cPUSH(opStack, op); opPushed=TRUE;
                 
             }
-            else if ( readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
-            else if ( readName(name,sizeof(name),ptr,&ptr) ) {
+            else if ( ev_readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
+            else if ( ev_readName(name,sizeof(name),ptr,&ptr) ) {
                 variantRef = ev_findVariantInMap(&theConstantsMap, name);
                 if (variantRef==NULL) {
                     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
@@ -800,6 +800,7 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred) {
     ----------------
  
         EVERR
+        EvCtx
         EvVariant
         EvVariantType
         EvDeferredVariant
