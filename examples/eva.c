@@ -29,13 +29,13 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
 
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
-        variant = qEvaluateExpression(ptr+1,&ptr);
-        qAddConstant(name, variant);
+        variant = evEvaluateExpression(ptr+1,&ptr);
+        evAddConstant(name, variant);
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         moreArguments=TRUE; while(moreArguments) {
-            variant       = qEvaluateExpression(ptr,&ptr);
+            variant       = evEvaluateExpression(ptr,&ptr);
             moreArguments = (*ptr==EVCH_PARAM_SEP); if (moreArguments) { ++ptr; }
             evDeferVariant(variant, !moreArguments, NULL);
         }

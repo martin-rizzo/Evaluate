@@ -73,6 +73,9 @@ typedef struct EvDeferredVariant {
 extern void evCreateContext(void);
 extern void evDestroyContext(void);
 
+extern void        evAddConstant(const utf8* name, const EvVariant* value);
+extern EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end);
+
 extern EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr);
 extern EvDeferredVariant* evGetFirstDeferredVariant(void);
 extern EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred);
@@ -660,7 +663,7 @@ struct { EvVariant       array[EV_CALC_STACK_SIZE]; int i; } vStack;
     while (cPEEK(oStack)->preced cond) { cEXECUTE(f,tmp,oStack,vStack); }
 
 
-static EvVariant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) {
+EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     const utf8 *ptr = start; int err;
     const Operator* op; EvVariant variant, tmp; const EvVariant *variantRef;
     utf8 name[EV_MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
@@ -746,7 +749,7 @@ static EvVariant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) 
     return &theVariant;
 }
 
-static void qAddConstant(const utf8* name, const EvVariant* value) {
+void evAddConstant(const utf8* name, const EvVariant* value) {
     ev_addVariantToMap(&theConstantsMap, value, name);
 }
 
@@ -810,8 +813,8 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred) {
             evDestroyContext( );
  
         EVALUATION OF EXPRESSIONS
-            EvVariant* evAddConstant(name, EvVariant* value)
-            EvVariant* evEvaluateExpression(..)
+            EvVariant* evAddConstant( name, EvVariant* value );
+            EvVariant* evEvaluateExpression( const utf8* expression, &out_end );
  
         DEFERRED EVALUATIONS
             EvDeferredVariant* evDeferVariant( EvVariant*, userValue, userPtr );
@@ -819,12 +822,12 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred) {
             EvDeferredVariant* evGetFirstDeferredVariant( );
             EvDeferredVariant* evGetNextDeferredVariant( EvDeferredVariant* );
 
-        EVALUATION ERROR REPORT (optional)
-            Bool evErr(EVERR,str);
-            void evErrBeginFile(filePath);
-            void evErrEndFile();
-            void evErrSetLineNumber(lineNumber);
-            Bool evErrPrintErrors(..)
+        EVALUATION ERROR REPORT // optional //
+            Bool evErr( EVERR, str );
+            void evErrBeginFile( filePath );
+            void evErrEndFile( );
+            void evErrSetLineNumber( lineNumber );
+            Bool evErrPrintErrors( )
 
  */
 
