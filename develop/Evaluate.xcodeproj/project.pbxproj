@@ -26,7 +26,7 @@
 		5B219F63245B7C5800852A77 /* evaluate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = evaluate.h; path = ../evaluate.h; sourceTree = "<group>"; };
 		5B219F65245B7C7500852A77 /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
 		5B219F66245B7C7500852A77 /* eva.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = eva.c; sourceTree = "<group>"; };
-		5BAAFA7D245B7B6400A06A4E /* ev */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = ev; sourceTree = BUILT_PRODUCTS_DIR; };
+		5BAAFA7D245B7B6400A06A4E /* eva */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = eva; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,7 +62,7 @@
 		5BAAFA70245B79E600A06A4E /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				5BAAFA7D245B7B6400A06A4E /* ev */,
+				5BAAFA7D245B7B6400A06A4E /* eva */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,9 +70,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		5BAAFA7C245B7B6400A06A4E /* ev */ = {
+		5BAAFA7C245B7B6400A06A4E /* eva */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 5BAAFA81245B7B6400A06A4E /* Build configuration list for PBXNativeTarget "ev" */;
+			buildConfigurationList = 5BAAFA81245B7B6400A06A4E /* Build configuration list for PBXNativeTarget "eva" */;
 			buildPhases = (
 				5BAAFA79245B7B6400A06A4E /* Sources */,
 				5BAAFA7A245B7B6400A06A4E /* Frameworks */,
@@ -82,9 +82,9 @@
 			);
 			dependencies = (
 			);
-			name = ev;
+			name = eva;
 			productName = ev;
-			productReference = 5BAAFA7D245B7B6400A06A4E /* ev */;
+			productReference = 5BAAFA7D245B7B6400A06A4E /* eva */;
 			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
@@ -114,7 +114,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				5BAAFA7C245B7B6400A06A4E /* ev */,
+				5BAAFA7C245B7B6400A06A4E /* eva */,
 			);
 		};
 /* End PBXProject section */
@@ -290,7 +290,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		5BAAFA81245B7B6400A06A4E /* Build configuration list for PBXNativeTarget "ev" */ = {
+		5BAAFA81245B7B6400A06A4E /* Build configuration list for PBXNativeTarget "eva" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				5BAAFA82245B7B6400A06A4E /* Debug */,
