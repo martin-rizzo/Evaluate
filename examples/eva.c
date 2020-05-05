@@ -12,7 +12,7 @@
 
 
 
-static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
+static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr, EVCTX* ctx) {
     Bool printByDefault = FALSE;
     Bool moreArguments;
     EvVariant* variant;
@@ -29,15 +29,15 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
 
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
-        variant = evEvaluateExpression(ptr+1,&ptr);
-        evAddConstant(name, variant);
+        variant = evEvaluateExpression(ptr+1,&ptr,ctx);
+        evAddConstant(name, variant, ctx);
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         moreArguments=TRUE; while(moreArguments) {
-            variant       = evEvaluateExpression(ptr,&ptr);
+            variant       = evEvaluateExpression(ptr,&ptr,ctx);
             moreArguments = (*ptr==EVCH_PARAM_SEP); if (moreArguments) { ++ptr; }
-            evDeferVariant(variant, !moreArguments, NULL);
+            evDeferVariant(variant, !moreArguments, NULL, ctx);
         }
     }
 
@@ -48,23 +48,23 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr) {
 }
 
 
-static Bool evaluateFile(const utf8* filePath) {
+static Bool evaluateFile(const utf8* filePath, EVCTX* ctx) {
     FILE* file=NULL; long fileSize=0; utf8 *fileBuffer=NULL; const utf8 *ptr; int err=0, lineNumber;
     assert( filePath!=NULL );
     
     /* try to load the entire file to a buffer */
     if (!err) {
-        file=fopen(filePath,"rb"); if (!file) { err=evErr(EVERR_FILE_NOT_FOUND,filePath); }
+        file=fopen(filePath,"rb"); if (!file) { err=evErr(EVERR_FILE_NOT_FOUND,filePath,ctx); }
     }
     if (!err) {
         fseek(file,0L,SEEK_END); fileSize=ftell(file); rewind(file);
-        if ( fileSize>MAX_FILE_SIZE ) { err=evErr(EVERR_FILE_TOO_LARGE,filePath); }
+        if ( fileSize>MAX_FILE_SIZE ) { err=evErr(EVERR_FILE_TOO_LARGE,filePath,ctx); }
     }
     if (!err) {
-        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { err=evErr(EVERR_NOT_ENOUGH_MEMORY,0); }
+        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { err=evErr(EVERR_NOT_ENOUGH_MEMORY,0,ctx); }
     }
     if (!err) {
-        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { err=evErr(EVERR_CANNOT_READ_FILE,filePath); }
+        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { err=evErr(EVERR_CANNOT_READ_FILE,filePath,ctx); }
         else { fileBuffer[fileSize]=EVCH_ENDOFFILE; }
     }
     if (file) { fclose(file); }
@@ -72,12 +72,12 @@ static Bool evaluateFile(const utf8* filePath) {
     /* if the file is loaded in buffer    */
     /* then evaluate all lines one by one */
     if (!err) {
-        evErrBeginFile(filePath);
+        evErrBeginFile(filePath,ctx);
         lineNumber=0; ptr=fileBuffer; while ( *ptr!=EVCH_ENDOFFILE ) {
-            evErrSetLineNumber(++lineNumber);
-            evaluateTextLine(ptr,&ptr);
+            evErrSetLineNumber(++lineNumber,ctx);
+            evaluateTextLine(ptr,&ptr,ctx);
         }
-        evErrEndFile(filePath);
+        evErrEndFile(filePath,ctx);
     }
     /* release resources and return */
     free(fileBuffer);
@@ -115,12 +115,13 @@ int main(int argc, char *argv[]) {
         NULL
     };
     
+    EVCTX* ctx               = evCreateContext();
     int  numberOfFiles       = 0;
     Bool printHelpAndExit    = argc<=1;
     Bool printVersionAndExit = FALSE;
     const utf8 *filePaths[MAX_FILES]; memset(filePaths,0,sizeof(filePaths));
     
-    evCreateContext();
+    ctx = evCreateContext();
     
     /* process all parameters */
     for (i=1; i<argc; ++i) { param=argv[i];
@@ -136,14 +137,14 @@ int main(int argc, char *argv[]) {
     
     /* evaluate any file provided in the command line */
     for (i=0; i<numberOfFiles; ++i) {
-        evaluateFile(filePaths[i]);
+        evaluateFile(filePaths[i],ctx);
     }
     /* print all lines stored as deferred variants */
-    for ( deferred=evGetFirstDeferredVariant(); deferred; deferred=evGetNextDeferredVariant(deferred) ) {
+    for ( deferred=evGetFirstDeferredVariant(ctx); deferred; deferred=evGetNextDeferredVariant(deferred,ctx) ) {
         printLine(deferred);
     }
-    evErrPrintErrors();
-    evDestroyContext();
+    evErrPrintErrors(ctx);
+    evDestroyContext(ctx);
     return 0;
 }
 

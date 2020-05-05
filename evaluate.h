@@ -69,22 +69,23 @@ typedef struct EvDeferredVariant {
     struct EvDeferredVariant* next;
 } EvDeferredVariant;
 
+#define EVCTX void
 
-extern void evCreateContext(void);
-extern void evDestroyContext(void);
+extern EVCTX * evCreateContext(void);
+extern void    evDestroyContext(EVCTX* ctx);
 
-extern void        evAddConstant(const utf8* name, const EvVariant* value);
-extern EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end);
+extern void        evAddConstant(const utf8* name, const EvVariant* value, EVCTX* ctx);
+extern EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX* ctx);
 
-extern EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr);
-extern EvDeferredVariant* evGetFirstDeferredVariant(void);
-extern EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred);
+extern EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx);
+extern EvDeferredVariant* evGetFirstDeferredVariant(EVCTX* ctx);
+extern EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred, EVCTX* ctx);
 
-extern int  evErr(EVERR everr, const utf8 *str);
-extern void evErrBeginFile(const utf8* filePath);
-extern void evErrEndFile(const utf8* filePath);
-extern void evErrSetLineNumber(int lineNumber);
-extern Bool evErrPrintErrors(void);
+extern int  evErr(EVERR everr, const utf8 *str, EVCTX* ctx);
+extern void evErrBeginFile(const utf8* filePath, EVCTX* ctx);
+extern void evErrEndFile(const utf8* filePath, EVCTX* ctx);
+extern void evErrSetLineNumber(int lineNumber, EVCTX* ctx);
+extern Bool evErrPrintErrors(EVCTX* ctx);
 
 
 /*=================================================================================================================*/
@@ -227,8 +228,9 @@ static Ev_Error*     theLastError    = NULL;
  * @param everr    The evaluation error identifier, ex: EVERR_INVALID_EXPRESSION
  * @param str      The optional text attached to the error reported (it can be NULL)
  */
-int evErr(EVERR everr, const utf8 *str) {
+int evErr(EVERR everr, const utf8 *str, EVCTX* ctx) {
     const utf8* message; Ev_Error* newError;
+    assert( ctx!=NULL );
     switch (everr) {
         case EVERR_NO_ERROR:             message = "SUCCESS"; break;
         case EVERR_FILE_NOT_FOUND:       message = "file not found";    break;
@@ -251,9 +253,9 @@ int evErr(EVERR everr, const utf8 *str) {
     return everr;
 }
 
-void evErrBeginFile(const utf8* filePath) {
+void evErrBeginFile(const utf8* filePath, EVCTX* ctx) {
     Ev_ErrorLine* newErrorLine;
-    assert(filePath!=NULL);
+    assert( filePath!=NULL && ctx!=NULL );
     newErrorLine = malloc(sizeof(Ev_ErrorLine));
     newErrorLine->permaPath = ev_permallocString(filePath,0,0,thePermalloc);
     newErrorLine->number    = 0;
@@ -261,20 +263,22 @@ void evErrBeginFile(const utf8* filePath) {
     theCurErrorLine = newErrorLine;
 }
 
-void evErrEndFile(const utf8* filePath) {
+void evErrEndFile(const utf8* filePath, EVCTX* ctx) {
     Ev_ErrorLine* prevErrorLine;
-    assert( filePath!=NULL );
+    assert( filePath!=NULL && ctx!=NULL );
     assert( theCurErrorLine!=NULL && strcmp(theCurErrorLine->permaPath,filePath)==0 );
     prevErrorLine = theCurErrorLine->prev;
     free(theCurErrorLine); theCurErrorLine=prevErrorLine;
 }
 
-void evErrSetLineNumber(int lineNumber) {
+void evErrSetLineNumber(int lineNumber, EVCTX* ctx) {
+    assert( ctx!=NULL );
     theCurErrorLine->number = lineNumber;
 }
 
-Bool evErrPrintErrors(void) {
+Bool evErrPrintErrors(EVCTX* ctx) {
     Ev_Error* error; const int column=0;
+    assert( ctx!=NULL );
     for (error=theFirstError; error; error=error->next) {
         if (error->line.permaPath!=NULL && error->line.number>0) {
             if (column>0) { printf("%s:%d:%d: ", error->line.permaPath, error->line.number, column); }
@@ -663,12 +667,13 @@ struct { EvVariant       array[EV_CALC_STACK_SIZE]; int i; } vStack;
     while (cPEEK(oStack)->preced cond) { cEXECUTE(f,tmp,oStack,vStack); }
 
 
-EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end) {
+EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX* ctx) {
     const utf8 *ptr = start; int err;
     const Operator* op; EvVariant variant, tmp; const EvVariant *variantRef;
     utf8 name[EV_MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
-    assert( start!=NULL ); assert( out_end!=NULL );
-    assert( *start!=EVCH_PARAM_SEP ); assert( *start!=EVCH_ENDOFFILE );
+    assert( start!=NULL && *start!=EVCH_PARAM_SEP && *start!=EVCH_ENDOFFILE );
+    assert( out_end!=NULL );
+    assert( ctx!=NULL );
 
     err = 0;
     theVariant.evtype = EVTYPE_EMPTY;
@@ -714,7 +719,7 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end) {
             }
             else if (*ptr==')') {
                 cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, ev_calculate,tmp,opStack,vStack);
-                if (cPOP(opStack)!=&OpParenthesis) { err=evErr(EVERR_UNEXPECTED_PTHESIS,0); }
+                if (cPOP(opStack)!=&OpParenthesis) { err=evErr(EVERR_UNEXPECTED_PTHESIS,0,ctx); }
                 ++ptr;
             }
             else if ( ev_readOperator(&op,precededByNumber,ptr,&ptr) ) {
@@ -733,14 +738,14 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end) {
                 }
                 cPUSH(vStack, (*variantRef));
             }
-            else { err=evErr(EVERR_INVALID_EXPRESSION,0); }
+            else { err=evErr(EVERR_INVALID_EXPRESSION,0,ctx); }
             skipblankspaces(ptr);
         }
 
         /* process any pending operator before return */
         if (!err) { cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, ev_calculate,tmp,opStack,vStack); }
-        if (!err && cPEEK(opStack)==&OpParenthesis) { err=evErr(EVERR_TOO_MANY_OPEN_PTHESES,0); }
-        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=evErr(EVERR_INVALID_EXPRESSION,0); }
+        if (!err && cPEEK(opStack)==&OpParenthesis) { err=evErr(EVERR_TOO_MANY_OPEN_PTHESES,0,ctx); }
+        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=evErr(EVERR_INVALID_EXPRESSION,0,ctx); }
         if (!err) { theVariant = cPOP(vStack); }
     }
 
@@ -749,19 +754,24 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end) {
     return &theVariant;
 }
 
-void evAddConstant(const utf8* name, const EvVariant* value) {
+void evAddConstant(const utf8* name, const EvVariant* value, EVCTX* ctx) {
+    assert( name!=NULL && value!=NULL && ctx!=NULL );
     ev_addVariantToMap(&theConstantsMap, value, name);
 }
 
 /*=================================================================================================================*/
 #pragma mark - > CREATION / DESTRUCTION
 
-void evCreateContext(void) {
+EVCTX* evCreateContext(void) {
+    EVCTX* ctx = malloc(4);
     thePermalloc = ev_permallocInit();
+    return ctx;
 }
 
-void evDestroyContext(void) {
+void evDestroyContext(EVCTX* ctx) {
+    if (ctx==NULL) { return; }
     ev_permallocDealloc(thePermalloc);
+    free(ctx);
 }
 
 
@@ -777,8 +787,10 @@ typedef struct Ev_DeferredList { EvDeferredVariant *first, *last; } Ev_DeferredL
 
 static Ev_DeferredList theDeferredList = {0,0};
 
-EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr) {
-    EvDeferredVariant* deferred = ev_permalloc(sizeof(EvDeferredVariant),thePermalloc);
+EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx) {
+    EvDeferredVariant* deferred;
+    assert( variant!=NULL && ctx!=NULL );
+    deferred = ev_permalloc(sizeof(EvDeferredVariant),thePermalloc);
     deferred->userValue = userValue;
     deferred->userPtr   = userPtr;
     ev_copyVariant(&deferred->variant, variant);
@@ -786,13 +798,15 @@ EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void*
     return deferred;
 }
 
-EvDeferredVariant* evGetFirstDeferredVariant(void) {
+EvDeferredVariant* evGetFirstDeferredVariant(EVCTX* ctx) {
+    assert( ctx!=NULL );
     if (theFirstError!=NULL) { return NULL; }
     /* TODO: evaluate all deferred variants! */
     return theDeferredList.first;
 }
 
-EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred) {
+EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred, EVCTX* ctx) {
+    assert( deferred!=NULL && ctx!=NULL );
     return deferred->next;
 }
 
@@ -809,25 +823,25 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred) {
         EvDeferredVariant
  
         CREATION / DESTRUCTION
-            evCreateContext( );
-            evDestroyContext( );
+            EVCTX* evCreateContext( );
+            void   evDestroyContext( EVCTX* );
  
         EVALUATION OF EXPRESSIONS
-            EvVariant* evAddConstant( name, EvVariant* value );
-            EvVariant* evEvaluateExpression( const utf8* expression, &out_end );
+            EvVariant* evAddConstant( name, EvVariant* value, EVCTX* );
+            EvVariant* evEvaluateExpression( const utf8* expression, &out_end, EVCTX* );
  
         DEFERRED EVALUATIONS
-            EvDeferredVariant* evDeferVariant( EvVariant*, userValue, userPtr );
-            void               evEvaluateDeferredVariants( );
-            EvDeferredVariant* evGetFirstDeferredVariant( );
-            EvDeferredVariant* evGetNextDeferredVariant( EvDeferredVariant* );
+            EvDeferredVariant* evDeferVariant( EvVariant*, userValue, userPtr, EVCTX* );
+            void               evEvaluateDeferredVariants( EVCTX* );
+            EvDeferredVariant* evGetFirstDeferredVariant( EVCTX* );
+            EvDeferredVariant* evGetNextDeferredVariant( EvDeferredVariant*, EVCTX* );
 
         EVALUATION ERROR REPORT // optional //
-            Bool evErr( EVERR, str );
-            void evErrBeginFile( filePath );
-            void evErrEndFile( );
-            void evErrSetLineNumber( lineNumber );
-            Bool evErrPrintErrors( )
+            Bool evErr( EVERR, str, EVCTX* );
+            void evErrBeginFile( filePath, EVCTX* );
+            void evErrEndFile( EVCTX* );
+            void evErrSetLineNumber( lineNumber, EVCTX* );
+            Bool evErrPrintErrors( EVCTX* )
 
  */
 
