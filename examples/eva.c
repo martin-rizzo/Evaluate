@@ -54,17 +54,17 @@ static Bool evaluateFile(const utf8* filePath) {
     
     /* try to load the entire file to a buffer */
     if (!err) {
-        file=fopen(filePath,"rb"); if (!file) { err=everr(EVERR_FILE_NOT_FOUND,filePath); }
+        file=fopen(filePath,"rb"); if (!file) { err=evErr(EVERR_FILE_NOT_FOUND,filePath); }
     }
     if (!err) {
         fseek(file,0L,SEEK_END); fileSize=ftell(file); rewind(file);
-        if ( fileSize>MAX_FILE_SIZE ) { err=everr(EVERR_FILE_TOO_LARGE,filePath); }
+        if ( fileSize>MAX_FILE_SIZE ) { err=evErr(EVERR_FILE_TOO_LARGE,filePath); }
     }
     if (!err) {
-        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { err=everr(EVERR_NOT_ENOUGH_MEMORY,0); }
+        fileBuffer = malloc(fileSize+1); if (!fileBuffer) { err=evErr(EVERR_NOT_ENOUGH_MEMORY,0); }
     }
     if (!err) {
-        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { err=everr(EVERR_CANNOT_READ_FILE,filePath); }
+        if (fileSize!=fread(fileBuffer, 1, fileSize, file)) { err=evErr(EVERR_CANNOT_READ_FILE,filePath); }
         else { fileBuffer[fileSize]=EVCH_ENDOFFILE; }
     }
     if (file) { fclose(file); }
@@ -72,12 +72,12 @@ static Bool evaluateFile(const utf8* filePath) {
     /* if the file is loaded in buffer    */
     /* then evaluate all lines one by one */
     if (!err) {
-        everrBeginFile(filePath);
+        evErrBeginFile(filePath);
         lineNumber=0; ptr=fileBuffer; while ( *ptr!=EVCH_ENDOFFILE ) {
-            everrSetLineNumber(++lineNumber);
+            evErrSetLineNumber(++lineNumber);
             evaluateTextLine(ptr,&ptr);
         }
-        everrEndFile(filePath);
+        evErrEndFile(filePath);
     }
     /* release resources and return */
     free(fileBuffer);
@@ -142,7 +142,7 @@ int main(int argc, char *argv[]) {
     for ( deferred=evGetFirstDeferredVariant(); deferred; deferred=evGetNextDeferredVariant(deferred) ) {
         printLine(deferred);
     }
-    everrPrintErrors();
+    evErrPrintErrors();
     evDestroyContext();
     return 0;
 }

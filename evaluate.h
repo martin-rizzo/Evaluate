@@ -80,11 +80,11 @@ extern EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue
 extern EvDeferredVariant* evGetFirstDeferredVariant(void);
 extern EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred);
 
-extern int  everr(EVERR everr, const utf8 *str);
-extern void everrBeginFile(const utf8* filePath);
-extern void everrEndFile(const utf8* filePath);
-extern void everrSetLineNumber(int lineNumber);
-extern Bool everrPrintErrors(void);
+extern int  evErr(EVERR everr, const utf8 *str);
+extern void evErrBeginFile(const utf8* filePath);
+extern void evErrEndFile(const utf8* filePath);
+extern void evErrSetLineNumber(int lineNumber);
+extern Bool evErrPrintErrors(void);
 
 
 /*=================================================================================================================*/
@@ -227,7 +227,7 @@ static Ev_Error*     theLastError    = NULL;
  * @param everr    The evaluation error identifier, ex: EVERR_INVALID_EXPRESSION
  * @param str      The optional text attached to the error reported (it can be NULL)
  */
-int everr(EVERR everr, const utf8 *str) {
+int evErr(EVERR everr, const utf8 *str) {
     const utf8* message; Ev_Error* newError;
     switch (everr) {
         case EVERR_NO_ERROR:             message = "SUCCESS"; break;
@@ -251,7 +251,7 @@ int everr(EVERR everr, const utf8 *str) {
     return everr;
 }
 
-void everrBeginFile(const utf8* filePath) {
+void evErrBeginFile(const utf8* filePath) {
     Ev_ErrorLine* newErrorLine;
     assert(filePath!=NULL);
     newErrorLine = malloc(sizeof(Ev_ErrorLine));
@@ -261,7 +261,7 @@ void everrBeginFile(const utf8* filePath) {
     theCurErrorLine = newErrorLine;
 }
 
-void everrEndFile(const utf8* filePath) {
+void evErrEndFile(const utf8* filePath) {
     Ev_ErrorLine* prevErrorLine;
     assert( filePath!=NULL );
     assert( theCurErrorLine!=NULL && strcmp(theCurErrorLine->permaPath,filePath)==0 );
@@ -269,11 +269,11 @@ void everrEndFile(const utf8* filePath) {
     free(theCurErrorLine); theCurErrorLine=prevErrorLine;
 }
 
-void everrSetLineNumber(int lineNumber) {
+void evErrSetLineNumber(int lineNumber) {
     theCurErrorLine->number = lineNumber;
 }
 
-Bool everrPrintErrors(void) {
+Bool evErrPrintErrors(void) {
     Ev_Error* error; const int column=0;
     for (error=theFirstError; error; error=error->next) {
         if (error->line.permaPath!=NULL && error->line.number>0) {
@@ -714,7 +714,7 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end) {
             }
             else if (*ptr==')') {
                 cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, ev_calculate,tmp,opStack,vStack);
-                if (cPOP(opStack)!=&OpParenthesis) { err=everr(EVERR_UNEXPECTED_PTHESIS,0); }
+                if (cPOP(opStack)!=&OpParenthesis) { err=evErr(EVERR_UNEXPECTED_PTHESIS,0); }
                 ++ptr;
             }
             else if ( ev_readOperator(&op,precededByNumber,ptr,&ptr) ) {
@@ -733,14 +733,14 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end) {
                 }
                 cPUSH(vStack, (*variantRef));
             }
-            else { err=everr(EVERR_INVALID_EXPRESSION,0); }
+            else { err=evErr(EVERR_INVALID_EXPRESSION,0); }
             skipblankspaces(ptr);
         }
 
         /* process any pending operator before return */
         if (!err) { cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, ev_calculate,tmp,opStack,vStack); }
-        if (!err && cPEEK(opStack)==&OpParenthesis) { err=everr(EVERR_TOO_MANY_OPEN_PTHESES,0); }
-        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=everr(EVERR_INVALID_EXPRESSION,0); }
+        if (!err && cPEEK(opStack)==&OpParenthesis) { err=evErr(EVERR_TOO_MANY_OPEN_PTHESES,0); }
+        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=evErr(EVERR_INVALID_EXPRESSION,0); }
         if (!err) { theVariant = cPOP(vStack); }
     }
 
