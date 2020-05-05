@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
         printLine(deferred);
     }
     everrPrintErrors();
-    permallocFreeAll();
+    ev_permallocFreeAll();
     return 0;
 }
 
