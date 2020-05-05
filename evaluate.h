@@ -451,23 +451,20 @@ static int ev_calculate(EvVariant* v, const EvVariant* left, const Operator *ope
 /*=================================================================================================================*/
 #pragma mark - > VARIANT CONTAINERS
 
-#define calculateHash(hash,ptr,string) \
+#define ev_calculateHash(hash,ptr,string) \
     hash=5381; ptr=(unsigned char*)string; while (*ptr) { hash = ((hash<<5)+hash) ^ *ptr++; }
 
-#define EmptyVariantList { 0, 0 }
-#define EmptyVariantMap  { 0 }
-
-typedef struct VariantElement {
+typedef struct Ev_VariantElement {
     EvVariant variant; union { int integer; const utf8* string; } key;
-    struct VariantElement* next;
-} VariantElement;
+    struct Ev_VariantElement* next;
+} Ev_VariantElement;
 
-typedef struct VariantList { VariantElement *first, *last; } VariantList;
-typedef struct VariantList VariantMapSlot;
-typedef struct VariantMap  { VariantMapSlot* slots; } VariantMap;
+typedef struct Ev_VariantList { Ev_VariantElement *first, *last; } Ev_VariantList;
+typedef struct Ev_VariantList Ev_VariantMapSlot;
+typedef struct Ev_VariantMap  { Ev_VariantMapSlot* slots; } VariantMap;
 
 
-static void copyVariant(EvVariant* dest, const EvVariant* sour) {
+static void ev_copyVariant(EvVariant* dest, const EvVariant* sour) {
     int length; utf8* begin;
     assert( dest!=NULL && sour!=NULL );
     switch ( (dest->evtype=sour->evtype) ) {
@@ -485,48 +482,37 @@ static void copyVariant(EvVariant* dest, const EvVariant* sour) {
     }
 }
 
-static void addVariantElementToList(VariantList* list, VariantElement* elementToAdd) {
+static void ev_addVariantElementToList(Ev_VariantList* list, Ev_VariantElement* elementToAdd) {
     if (list->last) { list->last = (list->last->next = elementToAdd); }
     else            { list->last = (list->first = elementToAdd);      }
 }
 
-/*
-static void addVariantToListKI(VariantList* list, const Variant* variantToAdd, int integerKey) {
-    VariantElement* element;
-    assert( list!=NULL && variantToAdd!=NULL );
-    element = permalloc(sizeof(VariantElement));
-    element->key.integer = integerKey;
-    copyVariant(&element->variant, variantToAdd);
-    addVariantElementToList(list, element);
-}
-*/
-
-static void addVariantToListKS(VariantList* list, const EvVariant* variantToAdd, const utf8* stringKey) {
-    VariantElement* element; int sizeofStringKey; utf8* copyofStringKey;
+static void ev_addVariantToListKS(Ev_VariantList* list, const EvVariant* variantToAdd, const utf8* stringKey) {
+    Ev_VariantElement* element; int sizeofStringKey; utf8* copyofStringKey;
     assert( list!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     
     sizeofStringKey = (int)strlen(stringKey)+1;
     copyofStringKey = ev_permalloc(sizeofStringKey,thePermalloc);
     memcpy(copyofStringKey, stringKey, sizeofStringKey);
     
-    element             = ev_permalloc(sizeof(VariantElement),thePermalloc);
+    element             = ev_permalloc(sizeof(Ev_VariantElement),thePermalloc);
     element->key.string = copyofStringKey;
-    copyVariant(&element->variant, variantToAdd);
-    addVariantElementToList(list, element);
+    ev_copyVariant(&element->variant, variantToAdd);
+    ev_addVariantElementToList(list, element);
 }
 
-static void addVariantToMap(VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey) {
+static void ev_addVariantToMap(VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey) {
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
-    calculateHash(hash,tmp,stringKey);
-    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(VariantMapSlot),thePermalloc); }
-    addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
+    ev_calculateHash(hash,tmp,stringKey);
+    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantMapSlot),thePermalloc); }
+    ev_addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey);
 }
 
-static const EvVariant* findVariantInMap(VariantMap* map, const utf8* stringKey) {
-    unsigned hash; VariantElement* element; unsigned char* tmp;
+static const EvVariant* ev_findVariantInMap(VariantMap* map, const utf8* stringKey) {
+    unsigned hash; Ev_VariantElement* element; unsigned char* tmp;
     assert( map!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
-    calculateHash(hash,tmp,stringKey);
+    ev_calculateHash(hash,tmp,stringKey);
     element = map->slots ? map->slots[hash%EV_NUMBER_OF_MAP_SLOTS].first : NULL;
     while (element) {
         if ( 0==strcmp(element->key.string,stringKey) ) { return &element->variant; }
@@ -654,7 +640,7 @@ static Bool readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf8 *
 /*=================================================================================================================*/
 #pragma mark - > EXPRESION EVALUATOR
 
-static VariantMap theConstantsMap = EmptyVariantMap;
+static VariantMap theConstantsMap = { 0 };
 
 static EvVariant theVariant;
 struct { const Operator* array[EV_CALC_STACK_SIZE]; int i; } opStack;
@@ -735,7 +721,7 @@ static EvVariant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) 
             }
             else if ( readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( readName(name,sizeof(name),ptr,&ptr) ) {
-                variantRef = findVariantInMap(&theConstantsMap, name);
+                variantRef = ev_findVariantInMap(&theConstantsMap, name);
                 if (variantRef==NULL) {
                     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.evtype = EVTYPE_UNSOLVED;
@@ -761,7 +747,7 @@ static EvVariant * qEvaluateExpression(const utf8 *start, const utf8 **out_end) 
 }
 
 static void qAddConstant(const utf8* name, const EvVariant* value) {
-    addVariantToMap(&theConstantsMap, value, name);
+    ev_addVariantToMap(&theConstantsMap, value, name);
 }
 
 /*=================================================================================================================*/
@@ -779,7 +765,7 @@ void evDestroyContext(void) {
 /*=================================================================================================================*/
 #pragma mark - > DEFERRED EVALUATIONS
 
-#define ev_AddToList(list,element) \
+#define ev_addToList(list,element) \
     if ((list)->last) { (list)->last = ((list)->last->next = (element)); } \
     else              { (list)->last = ((list)->first      = (element)); }
 
@@ -792,8 +778,8 @@ EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void*
     EvDeferredVariant* deferred = ev_permalloc(sizeof(EvDeferredVariant),thePermalloc);
     deferred->userValue = userValue;
     deferred->userPtr   = userPtr;
-    copyVariant(&deferred->variant, variant);
-    ev_AddToList(&theDeferredList,deferred);
+    ev_copyVariant(&deferred->variant, variant);
+    ev_addToList(&theDeferredList,deferred);
     return deferred;
 }
 
