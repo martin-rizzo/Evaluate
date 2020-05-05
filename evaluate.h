@@ -111,6 +111,14 @@ typedef enum EVCH {
     EVCH_HEXPREFIX_ADDR='$'  , EVCH_HEXPREFIX   ='#' , EVCH_BINPREFIX    ='%'
 } StdChars_;
 
+/** The information hidden behind the EVCTX pointer */
+typedef struct Ev_Context {
+    struct Ev_PermallocContext* permactx;
+    struct Ev_ErrorLine*        curErrorLine;
+    struct Ev_Error*            firstError;
+    struct Ev_Error*            lastError;
+} Ev_Context;
+
 
 
 /*=================================================================================================================*/
@@ -217,12 +225,6 @@ static void ev_permallocDealloc(Ev_PermallocContext* ctx) {
 typedef struct Ev_ErrorLine { const utf8* permaPath; int number; struct Ev_ErrorLine* prev;    } Ev_ErrorLine;
 typedef struct Ev_Error { EVERR id; const utf8* str; Ev_ErrorLine line; struct Ev_Error* next; } Ev_Error;
 
-typedef struct Ev_Context {
-    Ev_PermallocContext* permactx;
-    Ev_ErrorLine*        curErrorLine;
-    Ev_Error*            firstError;
-    Ev_Error*            lastError;
-} Ev_Context;
 
 #define CTX(member) ((Ev_Context*)ctx)->member
 
@@ -466,13 +468,11 @@ static int ev_calculate(EvVariant* v, const EvVariant* left, const Operator *ope
     hash=5381; ptr=(unsigned char*)string; while (*ptr) { hash = ((hash<<5)+hash) ^ *ptr++; }
 
 typedef struct Ev_VariantElement {
-    EvVariant variant; union { int integer; const utf8* string; } key;
-    struct Ev_VariantElement* next;
+    EvVariant variant; union { int integer; const utf8* string; } key; struct Ev_VariantElement* next;
 } Ev_VariantElement;
 
 typedef struct Ev_VariantList { Ev_VariantElement *first, *last; } Ev_VariantList;
-typedef struct Ev_VariantList Ev_VariantMapSlot;
-typedef struct Ev_VariantMap  { Ev_VariantMapSlot* slots; } VariantMap;
+typedef struct Ev_VariantMap  { Ev_VariantList* slots;           } Ev_VariantMap;
 
 
 static void ev_copyVariant(EvVariant* dest, const EvVariant* sour, EVCTX* ctx) {
@@ -512,15 +512,15 @@ static void ev_addVariantToListKS(Ev_VariantList* list, const EvVariant* variant
     ev_addVariantElementToList(list, element);
 }
 
-static void ev_addVariantToMap(VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
+static void ev_addVariantToMap(Ev_VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     ev_calculateHash(hash,tmp,stringKey);
-    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantMapSlot),CTX(permactx)); }
+    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantList),CTX(permactx)); }
     ev_addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey, ctx);
 }
 
-static const EvVariant* ev_findVariantInMap(VariantMap* map, const utf8* stringKey) {
+static const EvVariant* ev_findVariantInMap(Ev_VariantMap* map, const utf8* stringKey) {
     unsigned hash; Ev_VariantElement* element; unsigned char* tmp;
     assert( map!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     ev_calculateHash(hash,tmp,stringKey);
@@ -651,7 +651,7 @@ static Bool ev_readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf
 /*=================================================================================================================*/
 #pragma mark - > EXPRESION EVALUATOR
 
-static VariantMap theConstantsMap = { 0 };
+static Ev_VariantMap theConstantsMap = { 0 };
 
 static EvVariant theVariant;
 struct { const Operator* array[EV_CALC_STACK_SIZE]; int i; } opStack;
