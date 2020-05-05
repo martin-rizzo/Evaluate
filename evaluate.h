@@ -212,6 +212,8 @@ static void ev_permallocDealloc(Ev_PermallocContext* ctx) {
     free(ctx);
 }
 
+#undef CTX
+
 
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
@@ -219,9 +221,14 @@ static void ev_permallocDealloc(Ev_PermallocContext* ctx) {
 typedef struct Ev_ErrorLine { const utf8* permaPath; int number; struct Ev_ErrorLine* prev;    } Ev_ErrorLine;
 typedef struct Ev_Error { EVERR id; const utf8* str; Ev_ErrorLine line; struct Ev_Error* next; } Ev_Error;
 
-static Ev_ErrorLine* theCurErrorLine = NULL;
-static Ev_Error*     theFirstError   = NULL;
-static Ev_Error*     theLastError    = NULL;
+typedef struct Ev_Ctx {
+    Ev_ErrorLine* curErrorLine;
+    Ev_Error*     firstError;
+    Ev_Error*     lastError;
+} Ev_Ctx;
+
+#define CTX(member) ((Ev_Ctx*)ctx)->member
+
 
 /**
  * Reports a error
@@ -244,12 +251,12 @@ int evErr(EVERR everr, const utf8 *str, EVCTX* ctx) {
     }
     newError = ev_permalloc(sizeof(Ev_Error), thePermalloc);
     newError->id             = everr;
-    newError->line.permaPath = theCurErrorLine ? theCurErrorLine->permaPath : 0;
-    newError->line.number    = theCurErrorLine ? theCurErrorLine->number    : 0;
+    newError->line.permaPath = CTX(curErrorLine) ? CTX(curErrorLine)->permaPath : 0;
+    newError->line.number    = CTX(curErrorLine) ? CTX(curErrorLine)->number    : 0;
     newError->str            = ev_permallocString(message,'$',str,thePermalloc);
     newError->next           = NULL;
-    if (!theFirstError) { theFirstError=newError; }
-    theLastError = theLastError ? (theLastError->next=newError) : newError;
+    if (!CTX(firstError)) { CTX(firstError)=newError; }
+    CTX(lastError) = CTX(lastError) ? (CTX(lastError)->next=newError) : newError;
     return everr;
 }
 
@@ -259,34 +266,34 @@ void evErrBeginFile(const utf8* filePath, EVCTX* ctx) {
     newErrorLine = malloc(sizeof(Ev_ErrorLine));
     newErrorLine->permaPath = ev_permallocString(filePath,0,0,thePermalloc);
     newErrorLine->number    = 0;
-    newErrorLine->prev      = theCurErrorLine;
-    theCurErrorLine = newErrorLine;
+    newErrorLine->prev      = CTX(curErrorLine);
+    CTX(curErrorLine) = newErrorLine;
 }
 
 void evErrEndFile(const utf8* filePath, EVCTX* ctx) {
     Ev_ErrorLine* prevErrorLine;
     assert( filePath!=NULL && ctx!=NULL );
-    assert( theCurErrorLine!=NULL && strcmp(theCurErrorLine->permaPath,filePath)==0 );
-    prevErrorLine = theCurErrorLine->prev;
-    free(theCurErrorLine); theCurErrorLine=prevErrorLine;
+    assert( CTX(curErrorLine)!=NULL && strcmp(CTX(curErrorLine)->permaPath,filePath)==0 );
+    prevErrorLine = CTX(curErrorLine)->prev;
+    free(CTX(curErrorLine)); CTX(curErrorLine)=prevErrorLine;
 }
 
 void evErrSetLineNumber(int lineNumber, EVCTX* ctx) {
     assert( ctx!=NULL );
-    theCurErrorLine->number = lineNumber;
+    CTX(curErrorLine)->number = lineNumber;
 }
 
 Bool evErrPrintErrors(EVCTX* ctx) {
     Ev_Error* error; const int column=0;
     assert( ctx!=NULL );
-    for (error=theFirstError; error; error=error->next) {
+    for (error=CTX(firstError); error; error=error->next) {
         if (error->line.permaPath!=NULL && error->line.number>0) {
             if (column>0) { printf("%s:%d:%d: ", error->line.permaPath, error->line.number, column); }
             else          { printf("%s:%d: "   , error->line.permaPath, error->line.number);         }
         }
         printf("%s %s\n", "error:", error->str);
     }
-    return (theFirstError!=NULL);
+    return (CTX(firstError)!=NULL);
 }
 
 /*=================================================================================================================*/
@@ -763,7 +770,10 @@ void evAddConstant(const utf8* name, const EvVariant* value, EVCTX* ctx) {
 #pragma mark - > CREATION / DESTRUCTION
 
 EVCTX* evCreateContext(void) {
-    EVCTX* ctx = malloc(4);
+    Ev_Ctx* ctx = malloc(sizeof(Ev_Ctx));
+    ctx->curErrorLine = NULL;
+    ctx->firstError   = NULL;
+    ctx->lastError    = NULL;
     thePermalloc = ev_permallocInit();
     return ctx;
 }
@@ -771,7 +781,7 @@ EVCTX* evCreateContext(void) {
 void evDestroyContext(EVCTX* ctx) {
     if (ctx==NULL) { return; }
     ev_permallocDealloc(thePermalloc);
-    free(ctx);
+    free((Ev_Ctx*)ctx);
 }
 
 
@@ -800,7 +810,7 @@ EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void*
 
 EvDeferredVariant* evGetFirstDeferredVariant(EVCTX* ctx) {
     assert( ctx!=NULL );
-    if (theFirstError!=NULL) { return NULL; }
+    if (CTX(firstError)!=NULL) { return NULL; }
     /* TODO: evaluate all deferred variants! */
     return theDeferredList.first;
 }
@@ -817,7 +827,7 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred, EVCTX* 
     ----------------
  
         EVERR
-        EvCtx
+        EVCTX
         EvVariant
         EvVariantType
         EvDeferredVariant
