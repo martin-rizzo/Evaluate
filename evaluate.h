@@ -520,8 +520,12 @@ static void ev_addVariantToListKS(Ev_VariantList* list, const EvVariant* variant
 static void ev_addVariantToMap(Ev_VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
+    if (map->slots==NULL) {
+        map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantList),CTX(permactx));
+        memset(map->slots, 0, EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantList));
+    }
+    assert( map->slots!=NULL );
     ev_calculateHash(hash,tmp,stringKey);
-    if (map->slots==NULL) { map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantList),CTX(permactx)); }
     ev_addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey, ctx);
 }
 
