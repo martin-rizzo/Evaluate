@@ -489,9 +489,9 @@ typedef struct Ev_VariantElement {
     struct Ev_VariantElement*                  next;
 } Ev_VariantElement;
 
-typedef struct Ev_DeferredList { EvDeferredVariant *first, *last; } Ev_DeferredList;
-typedef struct Ev_VariantList  { Ev_VariantElement *first, *last; } Ev_VariantList;
-typedef struct Ev_VariantMap   { Ev_VariantList    *slots;        } Ev_VariantMap;
+typedef struct Ev_DeferredList { EvDeferredVariant *first, *last;              } Ev_DeferredList;
+typedef struct Ev_VariantList  { Ev_VariantElement *first, *last;              } Ev_VariantList;
+typedef struct Ev_VariantMap   { Ev_VariantList slots[EV_NUMBER_OF_MAP_SLOTS]; } Ev_VariantMap;
 
 
 #define ev_calculateHash(hash,ptr,string) \
@@ -505,7 +505,7 @@ static Ev_DeferredList* ev_permallocDeferredList(Ev_PermallocContext* ctx) {
 
 static Ev_VariantMap* ev_permallocVariantMap(Ev_PermallocContext* ctx) {
     Ev_VariantMap* map = ev_permalloc(sizeof(Ev_VariantMap), ctx);
-    map->slots = NULL;
+    memset(map->slots, 0, EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantList));
     return map;
 }
 
@@ -531,11 +531,6 @@ static void ev_addVariantToListKS(Ev_VariantList* list, const EvVariant* variant
 static void ev_addVariantToMap(Ev_VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
-    if (map->slots==NULL) {
-        map->slots=ev_permalloc(EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantList),CTX(permactx));
-        memset(map->slots, 0, EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantList));
-    }
-    assert( map->slots!=NULL );
     ev_calculateHash(hash,tmp,stringKey);
     ev_addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey, ctx);
 }
@@ -544,7 +539,7 @@ static const EvVariant* ev_findVariantInMap(Ev_VariantMap* map, const utf8* stri
     unsigned hash; Ev_VariantElement* element; unsigned char* tmp;
     assert( map!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     ev_calculateHash(hash,tmp,stringKey);
-    element = map->slots ? map->slots[hash%EV_NUMBER_OF_MAP_SLOTS].first : NULL;
+    element = map->slots[hash%EV_NUMBER_OF_MAP_SLOTS].first;
     while (element) {
         if ( 0==strcmp(element->key.string,stringKey) ) { return &element->variant; }
         element = element->next;
