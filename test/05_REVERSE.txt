@@ -1,0 +1,12 @@
+;
+
+
+PRINT "TESTING REVERSE VARS"
+PRINT "--------------------"
+PRINT "   Y+2 -> ", Y+2
+PRINT "   Y = X * 8"
+PRINT "   X = 2"
+PRINT ""
+
+Y = X * 8
+X = 2

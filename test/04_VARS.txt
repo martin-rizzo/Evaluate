@@ -7,5 +7,5 @@ PRINT "TESTING VARS"
 PRINT "------------"
 PRINT "   A = 2"
 PRINT "   B = A * 8"
-PRINT "   B+2 = ", B+2
+PRINT "   B+2 -> ", B+2
 PRINT ""
