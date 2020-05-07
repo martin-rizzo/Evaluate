@@ -121,8 +121,6 @@ int main(int argc, char *argv[]) {
     Bool printVersionAndExit = FALSE;
     const utf8 *filePaths[MAX_FILES]; memset(filePaths,0,sizeof(filePaths));
     
-    ctx = evCreateContext();
-    
     /* process all parameters */
     for (i=1; i<argc; ++i) { param=argv[i];
         if ( param[0]!='-' ) { if (numberOfFiles<MAX_FILES) { filePaths[numberOfFiles++]=param; } }
