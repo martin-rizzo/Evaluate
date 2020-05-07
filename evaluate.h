@@ -98,11 +98,11 @@ extern Bool evErrPrintErrors(EVCTX* ctx);
 #include <ctype.h>
 #include <assert.h>
 
-#define EV_PERMALLOC_CHUNK_SIZE (64*1024)     /* < size of each chunk of memory allocated by autoalloc   */
-#define EV_MAX_NAME_LEN         (63)          /* < maximum length for names of vars (in bytes)           */
-#define EV_CALC_STACK_SIZE      (256)         /* < the calculator's stack size in number of elements     */
-#define EV_MIN_PRECEDENCE       (1)           /* < the minimum valid operator predecence                 */
-#define EV_NUMBER_OF_MAP_SLOTS  (77)          /* < number of slots used in the hashmap                   */
+#define EV_PERMALLOC_CHUNK_SIZE (64*1024)     /**< size of each chunk of memory managed by permalloc   */
+#define EV_MAX_NAME_LEN         (63)          /**< maximum length for names of vars (in bytes)         */
+#define EV_CALC_STACK_SIZE      (256)         /**< the calculator's stack size in number of elements   */
+#define EV_MIN_PRECEDENCE       (1)           /**< the minimum valid operator predecence               */
+#define EV_NUMBER_OF_MAP_SLOTS  (77)          /**< number of slots used in the hashmap                 */
 
 /** Some special characters used in expressions */
 typedef enum EVCH {
@@ -147,22 +147,24 @@ static int octvalue   (int ch) { return INRANGE(ch,'0','7') ? ch-'0' : -1; }
 
 
 /*=================================================================================================================*/
-#pragma mark - > PERMANENT DYNAMIC ALLOCATION (PERMALLOC)
+#pragma mark - > PERMANENT ALLOCATION (PERMALLOC)
+#define CTX(x) (ctx->x)
 
 typedef struct Ev_PermallocChunk {
-    struct Ev_PermallocChunk* next;
-    char                      data[EV_PERMALLOC_CHUNK_SIZE];
-} Ev_PermallocChunk;
+    char data[EV_PERMALLOC_CHUNK_SIZE]; struct Ev_PermallocChunk* next; } Ev_PermallocChunk;
 
 typedef struct Ev_PermallocContext {
-    Ev_PermallocChunk* chunk;
-    char*              ptr;
-    int                remaining;
-} Ev_PermallocContext;
+    Ev_PermallocChunk* chunk; char* ptr; int remaining; } Ev_PermallocContext;
 
-#define CTX(x) ctx->x
-
-static Ev_PermallocContext* ev_permallocInit() {
+/**
+ * Creates and returns a new permanent allocation context
+ *
+ * Each memory block allocated with 'ev_permalloc(..)' will belong to a context
+ * and when a context is destroyed all memory blocks that belong to it are freed.
+ * That is why permanent allocated memory don't need to be manually deallocated.
+ * Note: in multi-thread code, you should use a different context for each thread.
+ */
+static Ev_PermallocContext* ev_permallocCreateContext() {
     Ev_PermallocContext* ctx = malloc(sizeof(Ev_PermallocContext));
     CTX(chunk)     = NULL;
     CTX(ptr)       = NULL;
@@ -171,9 +173,21 @@ static Ev_PermallocContext* ev_permallocInit() {
 }
 
 /**
- * Allocates a block of memory that stays valid until the end of the program
+ * Destroys a permanent allocation context and frees all memory blocks that belong to it
+ */
+static void ev_permallocDestroyContext(Ev_PermallocContext* ctx) {
+    Ev_PermallocChunk *chunk, *nextChunk=NULL;
+    if (ctx==NULL) { return; }
+    for (chunk=CTX(chunk); chunk; chunk=nextChunk) { nextChunk=chunk->next; free(chunk); }
+    free(ctx);
+}
+
+/**
+ * Allocates a block of memory that stays valid until the context is destroyed
+ *
  * @param size The size of the memory block to alloc, in bytes
- * @return     A pointer to the beginning of the block
+ * @param ctx  The context where the memory block will be allocated
+ * @return A pointer to the beginning of the new allocated memory block
  */
 static void* ev_permalloc(int size, Ev_PermallocContext* ctx) {
     Ev_PermallocChunk* prevPermallocChunk; void* ptr;
@@ -191,10 +205,13 @@ static void* ev_permalloc(int size, Ev_PermallocContext* ctx) {
 /**
  * Allocates a string that is the result of replace a character from the provided replacement
  *
- * If the replacement pointer is NULL then the original string will be duplicated without any modification
+ * If the replacement pointer is NULL then the original string will be duplicated without any modification.
+ * As any permalloc operation, the allocated string stays valid until the context is destroyed.
  * @param string         The original string
  * @param charToReplace  The character to be replaced
  * @param replacement    The string that replaces the found character (optional, can be NULL)
+ * @param ctx            The context where the string will be allocated
+ * @returns A pointer to the new allocated string
  */
 static const utf8* ev_permallocString(const utf8* string, int charToReplace, const utf8* replacement, Ev_PermallocContext* ctx) {
     utf8 *buffer, *dest; const utf8 *ptr=string;
@@ -207,28 +224,15 @@ static const utf8* ev_permallocString(const utf8* string, int charToReplace, con
     *dest='\0'; return buffer;
 }
 
-/**
- * Deallocates all memory that previously was allocated with 'permalloc(..)'
- */
-static void ev_permallocDealloc(Ev_PermallocContext* ctx) {
-    Ev_PermallocChunk *chunk, *nextChunk=NULL;
-    if (ctx==NULL) { return; }
-    for (chunk=CTX(chunk); chunk; chunk=nextChunk) { nextChunk=chunk->next; free(chunk); }
-    free(ctx);
-}
-
 #undef CTX
 
 
 /*=================================================================================================================*/
 #pragma mark - > HANDLING ERRORS
+#define CTX(member) (((Ev_Context*)ctx)->member)
 
 typedef struct Ev_ErrorLine { const utf8* permaPath; int number; struct Ev_ErrorLine* prev;    } Ev_ErrorLine;
 typedef struct Ev_Error { EVERR id; const utf8* str; Ev_ErrorLine line; struct Ev_Error* next; } Ev_Error;
-
-
-#define CTX(member) ((Ev_Context*)ctx)->member
-
 
 /**
  * Reports a error
@@ -781,7 +785,7 @@ void evAddConstant(const utf8* name, const EvVariant* value, EVCTX* ctx) {
 
 EVCTX* evCreateContext(void) {
     Ev_Context* ctx = malloc(sizeof(Ev_Context));
-    CTX(permactx)     = ev_permallocInit();
+    CTX(permactx)     = ev_permallocCreateContext();
     CTX(deferredList) = ev_permallocDeferredList(CTX(permactx));
     CTX(constantsMap) = ev_permallocVariantMap(CTX(permactx));
     CTX(curErrorLine) = NULL;
@@ -792,7 +796,7 @@ EVCTX* evCreateContext(void) {
 
 void evDestroyContext(EVCTX* ctx) {
     if (ctx==NULL) { return; }
-    ev_permallocDealloc(CTX(permactx));
+    ev_permallocDestroyContext(CTX(permactx));
     free((Ev_Context*)ctx);
 }
 
