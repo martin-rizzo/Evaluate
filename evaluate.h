@@ -303,43 +303,43 @@ Bool evErrPrintErrors(EVCTX* ctx) {
 /*=================================================================================================================*/
 #pragma mark - > OPERATORS
 
-/** IDs of supported operators */
-typedef enum OperatorID {
-    OP_PLUS, OP_MINUS, OP_NOT, OP_LNOT, OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD,
-    OP_SHL, OP_SHR, OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE,
-    OP_AND, OP_XOR, OP_OR, OP_LAND, OP_LOR, OP_INVALID
-} OperatorID;
+/** Identifier of supported operators */
+typedef enum EVOP {
+    EVOP_PLUS, EVOP_MINUS, EVOP_NOT, EVOP_LNOT, EVOP_ADD, EVOP_SUB, EVOP_MUL, EVOP_DIV, EVOP_MOD,
+    EVOP_SHL, EVOP_SHR, EVOP_EQ, EVOP_NE, EVOP_LT, EVOP_LE, EVOP_GT, EVOP_GE,
+    EVOP_AND, EVOP_XOR, EVOP_OR, EVOP_LAND, EVOP_LOR, EVOP_INVALID
+} EVOP;
 
 /** Structure containing information about an operator (id, precedence, etc..) */
-typedef struct Operator { OperatorID id; const utf8* str; int preced; } Operator;
+typedef struct Operator { EVOP id; const utf8* str; int preced; } Operator;
 
 /** Array containing info about each UNARY operator. The last element in {0,0,0} */
 static const Operator UnaryOperators[5] = {
-    {OP_PLUS,"+ ",12}, {OP_MINUS,"- ",12}, {OP_NOT,"~ ",12}, {OP_LNOT,"! ",12},
+    {EVOP_PLUS,"+ ",12}, {EVOP_MINUS,"- ",12}, {EVOP_NOT,"~ ",12}, {EVOP_LNOT,"! ",12},
     {0,0,0}
 };
 /** Array containing info about each BINARY operator. The last element is {0,0,0} */
 static const Operator BinaryOperators[19] = {
-    {OP_SHL ,"<<", 9}, {OP_SHR   ,">>", 9},
-    {OP_LE  ,"<=", 8}, {OP_GE    ,">=", 8},
-    {OP_EQ  ,"==", 7}, {OP_NE    ,"!=", 7},
-    {OP_LAND,"&&", 3},
-    {OP_LOR ,"||", 2},
-    {OP_MUL ,"* ",11}, {OP_DIV,"/ ",11}, {OP_MOD,"% ",11},
-    {OP_ADD ,"+ ",10}, {OP_SUB,"- ",10},
-    {OP_LT  ,"< ", 8}, {OP_GT ,"> ", 8},
-    {OP_AND ,"& ", 6},
-    {OP_XOR ,"^ ", 5},
-    {OP_OR  ,"| ", 4},
-    /* {OP_TERN,"?",1} */
+    {EVOP_SHL ,"<<", 9}, {EVOP_SHR   ,">>", 9},
+    {EVOP_LE  ,"<=", 8}, {EVOP_GE    ,">=", 8},
+    {EVOP_EQ  ,"==", 7}, {EVOP_NE    ,"!=", 7},
+    {EVOP_LAND,"&&", 3},
+    {EVOP_LOR ,"||", 2},
+    {EVOP_MUL ,"* ",11}, {EVOP_DIV,"/ ",11}, {EVOP_MOD,"% ",11},
+    {EVOP_ADD ,"+ ",10}, {EVOP_SUB,"- ",10},
+    {EVOP_LT  ,"< ", 8}, {EVOP_GT ,"> ", 8},
+    {EVOP_AND ,"& ", 6},
+    {EVOP_XOR ,"^ ", 5},
+    {EVOP_OR  ,"| ", 4},
+    /* {EVOP_TERN,"?",1} */
     {0,0,0}
 };
 
 /** Special operator object used to mark parenthesis */
-static const Operator OpParenthesis = {OP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
+static const Operator OpParenthesis = {EVOP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
 
 /** Special operator object used to mark limits in the evaluator stack */
-static const Operator OpSafeGuard   = {OP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
+static const Operator OpSafeGuard   = {EVOP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
 
 
 /*=================================================================================================================*/
@@ -460,23 +460,23 @@ static int ev_calculate(EvVariant* v, const EvVariant* left, const Operator *ope
     assert( operator!=NULL && left!=NULL && right!=NULL );
     
     if ( ev_variantToInt(right,&intR) && ev_variantToInt(left,&intL) ) { switch(operator->id) {
-        case OP_PLUS : ev_return_INumber1(v, +, intR);
-        case OP_MINUS: ev_return_INumber1(v, -, intR);
-        case OP_NOT  : ev_return_INumber1(v, ~, intR);
-        case OP_LNOT : ev_return_INumber1(v, !, intR);
-        case OP_ADD  : ev_return_INumber2(v, intL, +,intR); case OP_SUB: ev_return_INumber2(v, intL, -,intR);
-        case OP_MUL  : ev_return_INumber2(v, intL, *,intR); case OP_DIV: ev_return_INumber2(v, intL, /,intR);
-        case OP_SHL  : ev_return_INumber2(v, intL,<<,intR); case OP_SHR: ev_return_INumber2(v, intL,>>,intR);
-        case OP_AND  : ev_return_INumber2(v, intL, &,intR); case OP_OR:  ev_return_INumber2(v, intL, |,intR);
-        case OP_XOR  : ev_return_INumber2(v, intL, ^,intR); case OP_MOD: ev_return_INumber2(v, intL, %,intR);
-        case OP_EQ   : ev_return_INumber2(v, intL,==,intR); case OP_NE : ev_return_INumber2(v, intL,!=,intR);
-        case OP_LT   : ev_return_INumber2(v, intL,< ,intR); case OP_GT : ev_return_INumber2(v, intL,> ,intR);
-        case OP_LE   : ev_return_INumber2(v, intL,<=,intR); case OP_GE : ev_return_INumber2(v, intL,>=,intR);
+        case EVOP_PLUS : ev_return_INumber1(v, +, intR);
+        case EVOP_MINUS: ev_return_INumber1(v, -, intR);
+        case EVOP_NOT  : ev_return_INumber1(v, ~, intR);
+        case EVOP_LNOT : ev_return_INumber1(v, !, intR);
+        case EVOP_ADD  : ev_return_INumber2(v, intL, +,intR); case EVOP_SUB: ev_return_INumber2(v, intL, -,intR);
+        case EVOP_MUL  : ev_return_INumber2(v, intL, *,intR); case EVOP_DIV: ev_return_INumber2(v, intL, /,intR);
+        case EVOP_SHL  : ev_return_INumber2(v, intL,<<,intR); case EVOP_SHR: ev_return_INumber2(v, intL,>>,intR);
+        case EVOP_AND  : ev_return_INumber2(v, intL, &,intR); case EVOP_OR:  ev_return_INumber2(v, intL, |,intR);
+        case EVOP_XOR  : ev_return_INumber2(v, intL, ^,intR); case EVOP_MOD: ev_return_INumber2(v, intL, %,intR);
+        case EVOP_EQ   : ev_return_INumber2(v, intL,==,intR); case EVOP_NE : ev_return_INumber2(v, intL,!=,intR);
+        case EVOP_LT   : ev_return_INumber2(v, intL,< ,intR); case EVOP_GT : ev_return_INumber2(v, intL,> ,intR);
+        case EVOP_LE   : ev_return_INumber2(v, intL,<=,intR); case EVOP_GE : ev_return_INumber2(v, intL,>=,intR);
         default: assert(FALSE); break;
     } }
     else if ( ev_variantToFloat(left,&float1) && ev_variantToFloat(right,&float2) ) { switch (operator->id) {
-        case OP_ADD: ev_return_FNumber2(v, float1, +,float2); case OP_SUB: ev_return_FNumber2(v, float1, -,float2);
-        case OP_MUL: ev_return_FNumber2(v, float1, *,float2); case OP_DIV: ev_return_FNumber2(v, float1, /,float2);
+        case EVOP_ADD: ev_return_FNumber2(v, float1, +,float2); case EVOP_SUB: ev_return_FNumber2(v, float1, -,float2);
+        case EVOP_MUL: ev_return_FNumber2(v, float1, *,float2); case EVOP_DIV: ev_return_FNumber2(v, float1, /,float2);
         default: assert(FALSE); break;
     } }
     (*v) = (*right);
