@@ -498,10 +498,6 @@ typedef struct Ev_DeferredList { EvDeferredVariant *first, *last;              }
 typedef struct Ev_VariantList  { Ev_VariantElement *first, *last;              } Ev_VariantList;
 typedef struct Ev_VariantMap   { Ev_VariantList slots[EV_NUMBER_OF_MAP_SLOTS]; } Ev_VariantMap;
 
-
-#define ev_calculateHash(hash,ptr,string) \
-    hash=5381; ptr=(unsigned char*)string; while (*ptr) { hash = ((hash<<5)+hash) ^ *ptr++; }
-
 static Ev_DeferredList* ev_permallocDeferredList(Ev_PermallocContext* ctx) {
     Ev_DeferredList* list = ev_permalloc(sizeof(Ev_DeferredList), ctx);
     list->first = list->last = NULL;
@@ -514,30 +510,28 @@ static Ev_VariantMap* ev_permallocVariantMap(Ev_PermallocContext* ctx) {
     return map;
 }
 
-static void ev_addVariantElementToList(Ev_VariantList* list, Ev_VariantElement* elementToAdd) {
-    if (list->last) { list->last = (list->last->next = elementToAdd); }
-    else            { list->last = (list->first = elementToAdd);      }
-}
+#define ev_calculateHash(hash,ptr,string) \
+    hash=5381; ptr=(unsigned char*)string; while (*ptr) { hash = ((hash<<5)+hash) ^ *ptr++; }
 
-static void ev_addVariantToListKS(Ev_VariantList* list, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
-    Ev_VariantElement* element; int sizeofStringKey; utf8* copyofStringKey;
-    assert( list!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' && ctx!=NULL );
-    
-    sizeofStringKey = (int)strlen(stringKey)+1;
-    copyofStringKey = ev_permalloc(sizeofStringKey,CTX(permactx));
-    memcpy(copyofStringKey, stringKey, sizeofStringKey);
+#define ev_addElementToList(list,elementToAdd)                                  \
+    if ((list)->last) { (list)->last = ((list)->last->next = (elementToAdd)); } \
+    else              { (list)->last = ((list)->first      = (elementToAdd)); }
+
+static void ev_addVariantToMapSlot(Ev_VariantList* mapSlot, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
+    Ev_VariantElement* element;
+    assert( mapSlot!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' && ctx!=NULL );
     
     element             = ev_permalloc(sizeof(Ev_VariantElement),CTX(permactx));
-    element->key.string = copyofStringKey;
+    element->key.string = ev_permallocString(stringKey,0,0,CTX(permactx));
     ev_copyVariant(&element->variant, variantToAdd, ctx);
-    ev_addVariantElementToList(list, element);
+    ev_addElementToList(mapSlot, element);
 }
 
 static void ev_addVariantToMap(Ev_VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
     unsigned hash; unsigned char* tmp;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     ev_calculateHash(hash,tmp,stringKey);
-    ev_addVariantToListKS(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey, ctx);
+    ev_addVariantToMapSlot(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey, ctx);
 }
 
 static const EvVariant* ev_findVariantInMap(Ev_VariantMap* map, const utf8* stringKey) {
@@ -805,10 +799,6 @@ void evDestroyContext(EVCTX* ctx) {
 /*=================================================================================================================*/
 #pragma mark - > DEFERRED EVALUATIONS
 
-#define ev_addToList(list,element) \
-    if ((list)->last) { (list)->last = ((list)->last->next = (element)); } \
-    else              { (list)->last = ((list)->first      = (element)); }
-
 EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx) {
     EvDeferredVariant* deferred;
     assert( variant!=NULL && ctx!=NULL );
@@ -816,7 +806,7 @@ EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void*
     deferred->userValue = userValue;
     deferred->userPtr   = userPtr;
     ev_copyVariant(&deferred->variant, variant, ctx);
-    ev_addToList(CTX(deferredList),deferred);
+    ev_addElementToList(CTX(deferredList),deferred);
     return deferred;
 }
 
@@ -835,8 +825,8 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred, EVCTX* 
 
 /*=================================================================================================================*/
 /*
-    PUBLIC FUNCTIONS
-    ----------------
+    PUBLIC TYPES & FUNCTIONS
+    ------------------------
  
         EVERR
         EVCTX
