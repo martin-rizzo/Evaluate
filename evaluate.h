@@ -311,15 +311,15 @@ typedef enum EVOP {
 } EVOP;
 
 /** Structure containing information about an operator (id, precedence, etc..) */
-typedef struct Operator { EVOP id; const utf8* str; int preced; } Operator;
+typedef struct Ev_Operator { EVOP id; const utf8* str; int preced; } Ev_Operator;
 
 /** Array containing info about each UNARY operator. The last element in {0,0,0} */
-static const Operator UnaryOperators[5] = {
+static const Ev_Operator Ev_UnaryOperators[5] = {
     {EVOP_PLUS,"+ ",12}, {EVOP_MINUS,"- ",12}, {EVOP_NOT,"~ ",12}, {EVOP_LNOT,"! ",12},
     {0,0,0}
 };
 /** Array containing info about each BINARY operator. The last element is {0,0,0} */
-static const Operator BinaryOperators[19] = {
+static const Ev_Operator Ev_BinaryOperators[19] = {
     {EVOP_SHL ,"<<", 9}, {EVOP_SHR   ,">>", 9},
     {EVOP_LE  ,"<=", 8}, {EVOP_GE    ,">=", 8},
     {EVOP_EQ  ,"==", 7}, {EVOP_NE    ,"!=", 7},
@@ -336,16 +336,17 @@ static const Operator BinaryOperators[19] = {
 };
 
 /** Special operator object used to mark parenthesis */
-static const Operator OpParenthesis = {EVOP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
+static const Ev_Operator Ev_Parenthesis = {EVOP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
 
 /** Special operator object used to mark limits in the evaluator stack */
-static const Operator OpSafeGuard   = {EVOP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
+static const Ev_Operator Ev_SafeGuard = {EVOP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
 
 
 /*=================================================================================================================*/
 #pragma mark - > VARIANTS
 
-static const EvVariant theEmptyVariant = { EVTYPE_EMPTY };
+/** Special variant object used as placeholder and delimiter */
+static const EvVariant Ev_EmptyVariant = { EVTYPE_EMPTY };
 
 static void ev_copyVariant(EvVariant* dest, const EvVariant* sour, EVCTX* ctx) {
     int length; utf8* begin;
@@ -455,7 +456,7 @@ static Bool ev_variantToString(const EvVariant* variant, utf8* buffer, int buffe
  * @param[in]  operator   The operation to apply
  * @param[in]  right      A variant containing the right operand
  */
-static int ev_calculate(EvVariant* v, const EvVariant* left, const Operator *operator, const EvVariant* right) {
+static int ev_calculate(EvVariant* v, const EvVariant* left, const Ev_Operator *operator, const EvVariant* right) {
     int intL,intR; float float1,float2;
     assert( operator!=NULL && left!=NULL && right!=NULL );
     
@@ -628,13 +629,13 @@ static Bool ev_readNumber(EvVariant* out_v, const utf8* ptr, const utf8** out_en
  * @returns
  *    FALSE when no operator can be read because the string format does not match with any known operator
  */
-static Bool ev_readOperator(const Operator** out_op, Bool precededByNumber, const utf8* ptr, const utf8** out_endptr) {
-    const Operator* op; int firstchar;
+static Bool ev_readOperator(const Ev_Operator** out_op, Bool precededByNumber, const utf8* ptr, const utf8** out_endptr) {
+    const Ev_Operator* op; int firstchar;
     assert( out_op!=NULL && ptr!=NULL );
 
     firstchar = ptr[0];
     if ( firstchar==EVCH_PARAM_SEP ) { return FALSE; }
-    op = (precededByNumber ? BinaryOperators : UnaryOperators); while (op->str!=NULL) {
+    op = (precededByNumber ? Ev_BinaryOperators : Ev_UnaryOperators); while (op->str!=NULL) {
         if ( op->str[0]==firstchar ) {
             if ( op->str[1]==' '    ) { *out_op=op; if (out_endptr) { (*out_endptr)=ptr+1; } return TRUE; }
             if ( op->str[1]==ptr[1] ) { *out_op=op; if (out_endptr) { (*out_endptr)=ptr+2; } return TRUE; }
@@ -671,8 +672,8 @@ static Bool ev_readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf
 #pragma mark - > EXPRESION EVALUATOR
 
 static EvVariant theVariant;
-struct { const Operator* array[EV_CALC_STACK_SIZE]; int i; } opStack;
-struct { EvVariant       array[EV_CALC_STACK_SIZE]; int i; } vStack;
+struct { const Ev_Operator* array[EV_CALC_STACK_SIZE]; int i; } opStack;
+struct { EvVariant          array[EV_CALC_STACK_SIZE]; int i; } vStack;
 
 
 /** Macros to manage calculator's stacks */
@@ -690,7 +691,7 @@ struct { EvVariant       array[EV_CALC_STACK_SIZE]; int i; } vStack;
 
 EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX* ctx) {
     const utf8 *ptr = start; int err;
-    const Operator* op; EvVariant variant, tmp; const EvVariant *variantRef;
+    const Ev_Operator* op; EvVariant variant, tmp; const EvVariant *variantRef;
     utf8 name[EV_MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL && *start!=EVCH_PARAM_SEP && *start!=EVCH_ENDOFFILE );
     assert( out_end!=NULL );
@@ -731,16 +732,16 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX*
     }
     /*-- evaluate expression ------------------*/
     else {
-        cINITSTACK( opStack,   &OpSafeGuard,    &OpSafeGuard    );
-        cINITSTACK( vStack,    theEmptyVariant, theEmptyVariant );
+        cINITSTACK( opStack,   &Ev_SafeGuard,   &Ev_SafeGuard   );
+        cINITSTACK( vStack,    Ev_EmptyVariant, Ev_EmptyVariant );
         while (*ptr!=EVCH_PARAM_SEP && !isendofcode(*ptr)) {
             precededByNumber=!opPushed; opPushed=FALSE;
             if (*ptr=='(') {
-                cPUSH(opStack,&OpParenthesis); opPushed=TRUE; ++ptr;
+                cPUSH(opStack,&Ev_Parenthesis); opPushed=TRUE; ++ptr;
             }
             else if (*ptr==')') {
                 cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, ev_calculate,tmp,opStack,vStack);
-                if (cPOP(opStack)!=&OpParenthesis) { err=evErr(EVERR_UNEXPECTED_PTHESIS,0,ctx); }
+                if (cPOP(opStack)!=&Ev_Parenthesis) { err=evErr(EVERR_UNEXPECTED_PTHESIS,0,ctx); }
                 ++ptr;
             }
             else if ( ev_readOperator(&op,precededByNumber,ptr,&ptr) ) {
@@ -765,8 +766,8 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX*
 
         /* process any pending operator before return */
         if (!err) { cWHILE_PRECEDENCE(>=EV_MIN_PRECEDENCE, ev_calculate,tmp,opStack,vStack); }
-        if (!err && cPEEK(opStack)==&OpParenthesis) { err=evErr(EVERR_TOO_MANY_OPEN_PTHESES,0,ctx); }
-        if (!err && (vStack.i!=3 || opStack.i!=2) ) { err=evErr(EVERR_INVALID_EXPRESSION,0,ctx); }
+        if (!err && cPEEK(opStack)==&Ev_Parenthesis) { err=evErr(EVERR_TOO_MANY_OPEN_PTHESES,0,ctx); }
+        if (!err && (vStack.i!=3 || opStack.i!=2) )  { err=evErr(EVERR_INVALID_EXPRESSION,0,ctx); }
         if (!err) { theVariant = cPOP(vStack); }
     }
 
