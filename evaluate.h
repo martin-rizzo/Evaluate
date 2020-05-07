@@ -617,9 +617,9 @@ static Bool ev_readNumber(EvVariant* out_v, const utf8* ptr, const utf8** out_en
 
 /**
  * Try to read a operator
- * @param[out] out_op    (output) Ref to the pointer where returns a pointer to a structure with info about the operator that was read in
- * @param[in]  ptr       pointer to the begin of the string containing the operator to read
- * @param[out] out_endptr   (optional output) Ref to the pointer where the end of reading will be stored, can be NULL
+ * @param[out] out_op     (output) Ref to the pointer where returns a pointer to a structure with info about the operator that was read in
+ * @param[in]  ptr        pointer to the begin of the string containing the operator to read
+ * @param[out] out_endptr (optional output) Ref to the pointer where the end of reading will be stored, can be NULL
  * @returns
  *    FALSE when no operator can be read because the string format does not match with any known operator
  */
@@ -745,7 +745,7 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_endptr, EVC
             else if ( ev_readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( ev_readName(name,sizeof(name),ptr,&ptr) ) {
                 variantRef = ev_findVariantInMap(CTX(constantsMap), name);
-                if (variantRef==NULL) {
+                if (variantRef==NULL || variantRef->evtype==EVTYPE_UNSOLVED) {
                     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.evtype = EVTYPE_UNSOLVED;
                     theVariant.unsolved.end    = ptr;
@@ -811,10 +811,29 @@ EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void*
 }
 
 EvDeferredVariant* evGetFirstDeferredVariant(EVCTX* ctx) {
+    EvDeferredVariant* deferred; EvVariant* result;
+    int unsolvedCount, solvedInThisCycle;
     assert( ctx!=NULL );
     if (CTX(firstError)!=NULL) { return NULL; }
-    /* TODO: evaluate all deferred variants! */
-    return CTX(deferredList)->first;
+
+    /* evaluate all unsolved deferred variants */
+    unsolvedCount = 0xFFFF;
+    do {
+        
+        unsolvedCount = solvedInThisCycle = 0;
+        for (deferred=CTX(deferredList)->first; deferred; deferred=deferred->next) {
+            if (deferred->variant.evtype == EVTYPE_UNSOLVED) {
+                result = evEvaluateExpression(deferred->variant.unsolved.begin, NULL, ctx);
+                if (result->evtype==EVTYPE_UNSOLVED) { ++unsolvedCount; }
+                else {
+                    ev_copyVariant(&deferred->variant, result, ctx);
+                    ++solvedInThisCycle;
+                }
+            }
+        }
+    } while ( unsolvedCount>0 && solvedInThisCycle>0 );
+    
+    return unsolvedCount>0 ? NULL : CTX(deferredList)->first;
 }
 
 EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred, EVCTX* ctx) {
@@ -832,23 +851,24 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred, EVCTX* 
         EVCTX
         EvVariant
         EvVariantType
-        EvDeferredVariant
+        EvConstant
+        EvUserConstant
  
         CREATION / DESTRUCTION
             EVCTX* evCreateContext( );
             void   evDestroyContext( EVCTX* );
  
-        EVALUATION OF EXPRESSIONS
-            EvVariant* evAddConstant( name, EvVariant* value, EVCTX* );
-            EvVariant* evEvaluateExpression( const utf8* expression, &out_end, EVCTX* );
- 
-        DEFERRED EVALUATIONS
-            EvDeferredVariant* evDeferVariant( EvVariant*, userValue, userPtr, EVCTX* );
-            void               evEvaluateDeferredVariants( EVCTX* );
-            EvDeferredVariant* evGetFirstDeferredVariant( EVCTX* );
-            EvDeferredVariant* evGetNextDeferredVariant( EvDeferredVariant*, EVCTX* );
+        EXPRESSION EVALUATION
+            EvVariant*  evEvaluateExpression( const utf8* expression, &out_end, EVCTX* );
+            void        evEvaluateAllUnsolvedConstants( );
+            EvConstant* evAddConstant( EvVariant*, name, EVCTX* );
 
-        EVALUATION ERROR REPORT // optional //
+        USER CONSTANTS
+            EvUserConstant* evAddUserConstant( EvVariant*, userValue, userPtr, EVCTX* );
+            EvUserConstant* evGetFirstUserConstant( EVCTX* );
+            EvUserConstant* evGetNextUserConstant( EvUserConstant*, EVCTX* );
+
+        EVALUATION ERROR REPORT
             Bool evErr( EVERR, str, EVCTX* );
             void evErrBeginFile( filePath, EVCTX* );
             void evErrEndFile( EVCTX* );
