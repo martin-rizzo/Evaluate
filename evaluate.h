@@ -69,7 +69,7 @@ typedef struct EvDeferredVariant {
     struct EvDeferredVariant* next;
 } EvDeferredVariant;
 
-#define EVCTX void
+typedef struct EVCTX { const void* nul; } EVCTX;
 
 extern EVCTX * evCreateContext(void);
 extern void    evDestroyContext(EVCTX* ctx);
