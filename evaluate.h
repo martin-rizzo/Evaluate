@@ -683,12 +683,11 @@ struct { EvVariant          array[EV_CALC_STACK_SIZE]; int i; } vStack;
     while (cPEEK(oStack)->preced cond) { cEXECUTE(f,tmp,oStack,vStack); }
 
 
-EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX* ctx) {
+EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_endptr, EVCTX* ctx) {
     const utf8 *ptr = start; int err;
     const Ev_Operator* op; EvVariant variant, tmp; const EvVariant *variantRef;
     utf8 name[EV_MAX_NAME_LEN]; Bool continueScanning, precededByNumber, opPushed=TRUE;
     assert( start!=NULL && *start!=EVCH_PARAM_SEP && *start!=EVCH_ENDOFFILE );
-    assert( out_end!=NULL );
     assert( ctx!=NULL );
 
     err = 0;
@@ -749,7 +748,8 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX*
                 if (variantRef==NULL) {
                     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.evtype = EVTYPE_UNSOLVED;
-                    theVariant.unsolved.end    = (*out_end) = ptr;
+                    theVariant.unsolved.end    = ptr;
+                    if (out_endptr) { (*out_endptr)=ptr; }
                     return &theVariant;
                 }
                 cPUSH(vStack, (*variantRef));
@@ -766,7 +766,7 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX*
     }
 
     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
-    (*out_end) = ptr;
+    if (out_endptr) { (*out_endptr)=ptr; }
     return &theVariant;
 }
 
