@@ -121,7 +121,7 @@ typedef enum EVCH {
 /** The information hidden behind the EVCTX pointer */
 typedef struct Ev_Context {
     struct Ev_PermallocContext* permactx;
-    struct Ev_VariantMap*       constantMap;
+    struct Ev_ConstantMap*      constantMap;
     struct Ev_UserConstantList* userConstantList;
     struct Ev_ErrorLine*        curErrorLine;
     struct Ev_Error*            firstError;
@@ -500,11 +500,11 @@ static int ev_calculate(EvVariant* v, const EvVariant* left, const Ev_Operator *
 
 
 /*=================================================================================================================*/
-#pragma mark - > VARIANT CONTAINERS
+#pragma mark - > CONTAINERS
 
-typedef struct Ev_VariantList      { EvConstant *first, *last;                     } Ev_VariantList;
-typedef struct Ev_VariantMap       { Ev_VariantList slots[EV_NUMBER_OF_MAP_SLOTS]; } Ev_VariantMap;
-typedef struct Ev_UserConstantList { EvUserConstant *first, *last;                 } Ev_UserConstantList;
+typedef struct Ev_ConstantList     { EvConstant     *first, *last;                  } Ev_ConstantList;
+typedef struct Ev_ConstantMap      { Ev_ConstantList slots[EV_NUMBER_OF_MAP_SLOTS]; } Ev_ConstantMap;
+typedef struct Ev_UserConstantList { EvUserConstant *first, *last;                  } Ev_UserConstantList;
 
 #define ev_permallocContainer(type,ctx) \
     ev_permallocSet(0, sizeof(type), ctx)
@@ -516,27 +516,27 @@ typedef struct Ev_UserConstantList { EvUserConstant *first, *last;              
 #define ev_calculateHash(hash,ptr,string) \
     hash=5381; ptr=(unsigned char*)string; while (*ptr) { hash = ((hash<<5)+hash) ^ *ptr++; }
 
-static EvConstant* ev_addVariantToMap(Ev_VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
+static EvConstant* ev_addConstantToMap(Ev_ConstantMap* map, const EvVariant* variant, const utf8* name, EVCTX* ctx) {
     unsigned hash; unsigned char* tmp;
-    Ev_VariantList* mapSlot; EvConstant* constant;
-    assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
+    Ev_ConstantList* mapSlot; EvConstant* constant;
+    assert( map!=NULL && variant!=NULL && name!=NULL && name[0]!='\0' );
     
-    ev_calculateHash(hash,tmp,stringKey);
+    ev_calculateHash(hash,tmp,name);
     mapSlot = &map->slots[hash%EV_NUMBER_OF_MAP_SLOTS];
     constant       = ev_permalloc(sizeof(EvConstant),CTX(permactx));
-    constant->name = ev_permallocString(stringKey,0,0,CTX(permactx));
-    ev_copyVariant(&constant->variant, variantToAdd, ctx);
+    constant->name = ev_permallocString(name,0,0,CTX(permactx));
+    ev_copyVariant(&constant->variant, variant, ctx);
     ev_addElementToList(mapSlot, constant);
     return constant;
 }
 
-static const EvVariant* ev_findVariantInMap(Ev_VariantMap* map, const utf8* stringKey) {
+static const EvVariant* ev_findConstantInMap(Ev_ConstantMap* map, const utf8* name) {
     unsigned hash; EvConstant* constant; unsigned char* tmp;
-    assert( map!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
-    ev_calculateHash(hash,tmp,stringKey);
+    assert( map!=NULL && name!=NULL && name[0]!='\0' );
+    ev_calculateHash(hash,tmp,name);
     constant = map->slots[hash%EV_NUMBER_OF_MAP_SLOTS].first;
     while (constant) {
-        if ( 0==strcmp(constant->name,stringKey) ) { return &constant->variant; }
+        if ( 0==strcmp(constant->name,name) ) { return &constant->variant; }
         constant = constant->next;
     }
     return NULL;
@@ -664,7 +664,7 @@ static Bool ev_readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf
 EVCTX* evCreateContext(void) {
     Ev_Context* ctx = malloc(sizeof(Ev_Context));
     CTX(permactx)         = ev_permallocCreateContext();
-    CTX(constantMap)      = ev_permallocContainer(Ev_VariantMap,       CTX(permactx));
+    CTX(constantMap)      = ev_permallocContainer(Ev_ConstantMap,      CTX(permactx));
     CTX(userConstantList) = ev_permallocContainer(Ev_UserConstantList, CTX(permactx));
     CTX(curErrorLine)     = NULL;
     CTX(firstError)       = NULL;
@@ -761,7 +761,7 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_endptr, EVC
             }
             else if ( ev_readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( ev_readName(name,sizeof(name),ptr,&ptr) ) {
-                variantRef = ev_findVariantInMap(CTX(constantMap), name);
+                variantRef = ev_findConstantInMap(CTX(constantMap), name);
                 if (variantRef==NULL || variantRef->evtype==EVTYPE_UNSOLVED) {
                     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.evtype = EVTYPE_UNSOLVED;
@@ -793,7 +793,7 @@ void evEvaluateAllUnsolvedConstants(void) {
 
 EvConstant* evAddConstant(const EvVariant* variant, const utf8* name, EVCTX* ctx) {
     assert( variant!=NULL && name!=NULL && ctx!=NULL );
-    return ev_addVariantToMap(CTX(constantMap), variant, name, ctx);
+    return ev_addConstantToMap(CTX(constantMap), variant, name, ctx);
 }
 
 
