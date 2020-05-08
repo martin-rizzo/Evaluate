@@ -30,14 +30,14 @@ static Bool evaluateTextLine(const utf8* ptr, const utf8** out_endptr, EVCTX* ct
     /* detect var assignation "=" */
     if ( *ptr=='=' ) {
         variant = evEvaluateExpression(ptr+1,&ptr,ctx);
-        evAddConstant(name, variant, ctx);
+        evAddConstant(variant, name, ctx);
     }
     /* detect output directive: "PRINT", "?" */
     else if (0==strcmp(name,"PRINT") || 0==strcmp(name,"?") || printByDefault) {
         moreArguments=TRUE; while(moreArguments) {
             variant       = evEvaluateExpression(ptr,&ptr,ctx);
             moreArguments = (*ptr==EVCH_PARAM_SEP); if (moreArguments) { ++ptr; }
-            evDeferVariant(variant, !moreArguments, NULL, ctx);
+            evAddUserConstant(variant, !moreArguments, NULL, ctx);
         }
     }
 
@@ -85,11 +85,11 @@ static Bool evaluateFile(const utf8* filePath, EVCTX* ctx) {
 }
 
 
-static void printLine(const EvDeferredVariant* deferred) {
+static void printLine(const EvUserConstant* constant) {
     utf8 str[256]; const EvVariant* variant;
-    assert( deferred!=NULL );
+    assert( constant!=NULL );
     
-    variant = &deferred->variant;
+    variant = &constant->variant;
     switch (variant->evtype) {
         case EVTYPE_EMPTY:    /* printf("<empty>"); */ break;
         case EVTYPE_UNSOLVED: printf("<..?..>"); break;
@@ -99,13 +99,13 @@ static void printLine(const EvDeferredVariant* deferred) {
         case EVTYPE_CSTRING:
             ev_variantToString(variant,str,sizeof(str)); printf("%s",str); break;
     }
-    printf(deferred->userValue==1 ? "\n" : " ");
+    printf(constant->userValue==1 ? "\n" : " ");
 }
 
 
 
 int main(int argc, char *argv[]) {
-    int i; EvDeferredVariant* deferred;
+    int i; EvUserConstant* constant;
     const utf8 *param;
     const utf8 *help[] = {
         "USAGE: qeval [options] file-to-evaluate","",
@@ -138,8 +138,8 @@ int main(int argc, char *argv[]) {
         evaluateFile(filePaths[i],ctx);
     }
     /* print all lines stored as deferred variants */
-    for ( deferred=evGetFirstDeferredVariant(ctx); deferred; deferred=evGetNextDeferredVariant(deferred,ctx) ) {
-        printLine(deferred);
+    for ( constant=evGetFirstUserConstant(ctx); constant; constant=evGetNextUserConstant(constant,ctx) ) {
+        printLine(constant);
     }
     evErrPrintErrors(ctx);
     evDestroyContext(ctx);

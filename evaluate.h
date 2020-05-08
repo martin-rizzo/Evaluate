@@ -62,24 +62,31 @@ typedef union EvVariant {
     struct { EVTYPE evtype; const utf8 *begin, *end; } unsolved;  /* < unsolved expression    */
 } EvVariant;
 
-typedef struct EvDeferredVariant {
-    EvVariant                 variant;
-    int                       userValue;
-    void*                     userPtr;
-    struct EvDeferredVariant* next;
-} EvDeferredVariant;
+typedef struct EvConstant {
+    EvVariant              variant;
+    const utf8*            name;
+    struct EvConstant*     next;
+} EvConstant;
+
+typedef struct EvUserConstant {
+    EvVariant              variant;
+    int                    userValue;
+    void*                  userPtr;
+    struct EvUserConstant* next;
+} EvUserConstant;
 
 typedef struct EVCTX { const void* nul; } EVCTX;
 
 extern EVCTX * evCreateContext(void);
 extern void    evDestroyContext(EVCTX* ctx);
 
-extern void        evAddConstant(const utf8* name, const EvVariant* value, EVCTX* ctx);
 extern EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX* ctx);
+extern void        evEvaluateAllUnsolvedConstants(void);
+extern EvConstant* evAddConstant(const EvVariant* value, const utf8* name, EVCTX* ctx);
 
-extern EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx);
-extern EvDeferredVariant* evGetFirstDeferredVariant(EVCTX* ctx);
-extern EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred, EVCTX* ctx);
+extern EvUserConstant* evAddUserConstant(EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx);
+extern EvUserConstant* evGetFirstUserConstant(EVCTX* ctx);
+extern EvUserConstant* evGetNextUserConstant(const EvUserConstant* constant, EVCTX* ctx);
 
 extern int  evErr(EVERR everr, const utf8 *str, EVCTX* ctx);
 extern void evErrBeginFile(const utf8* filePath, EVCTX* ctx);
@@ -114,8 +121,8 @@ typedef enum EVCH {
 /** The information hidden behind the EVCTX pointer */
 typedef struct Ev_Context {
     struct Ev_PermallocContext* permactx;
-    struct Ev_VariantMap*       constantsMap;
-    struct Ev_DeferredList*     deferredList;
+    struct Ev_VariantMap*       constantMap;
+    struct Ev_UserConstantList* userConstantList;
     struct Ev_ErrorLine*        curErrorLine;
     struct Ev_Error*            firstError;
     struct Ev_Error*            lastError;
@@ -200,6 +207,12 @@ static void* ev_permalloc(int size, Ev_PermallocContext* ctx) {
     /* allocates the first 'size' bytes counting from 'thePermallocPtr' */
     ptr=CTX(ptr); CTX(ptr)+=size; CTX(remaining)-=size;
     return ptr;
+}
+
+static void* ev_permallocSet(int value, int size, Ev_PermallocContext* ctx) {
+    void* allocatedMem = ev_permalloc(size, ctx);
+    memset(allocatedMem, value, size);
+    return allocatedMem;
 }
 
 /**
@@ -359,6 +372,7 @@ static void ev_copyVariant(EvVariant* dest, const EvVariant* sour, EVCTX* ctx) {
         case EVTYPE_CSTRING:
         case EVTYPE_UNSOLVED:
             length = (int)(sour->astring.end - sour->astring.begin);
+            assert( length>=0 );
             dest->astring.begin = (begin = ev_permalloc(length+1,CTX(permactx)));
             dest->astring.end   = begin + length;
             memcpy(begin, sour->astring.begin, length); begin[length]='\0';
@@ -488,60 +502,42 @@ static int ev_calculate(EvVariant* v, const EvVariant* left, const Ev_Operator *
 /*=================================================================================================================*/
 #pragma mark - > VARIANT CONTAINERS
 
-typedef struct Ev_VariantElement {
-    union { int integer; const utf8* string; } key;
-    EvVariant                                  variant;
-    struct Ev_VariantElement*                  next;
-} Ev_VariantElement;
+typedef struct Ev_VariantList      { EvConstant *first, *last;                     } Ev_VariantList;
+typedef struct Ev_VariantMap       { Ev_VariantList slots[EV_NUMBER_OF_MAP_SLOTS]; } Ev_VariantMap;
+typedef struct Ev_UserConstantList { EvUserConstant *first, *last;                 } Ev_UserConstantList;
 
-typedef struct Ev_DeferredList { EvDeferredVariant *first, *last;              } Ev_DeferredList;
-typedef struct Ev_VariantList  { Ev_VariantElement *first, *last;              } Ev_VariantList;
-typedef struct Ev_VariantMap   { Ev_VariantList slots[EV_NUMBER_OF_MAP_SLOTS]; } Ev_VariantMap;
-
-static Ev_DeferredList* ev_permallocDeferredList(Ev_PermallocContext* ctx) {
-    Ev_DeferredList* list = ev_permalloc(sizeof(Ev_DeferredList), ctx);
-    list->first = list->last = NULL;
-    return list;
-}
-
-static Ev_VariantMap* ev_permallocVariantMap(Ev_PermallocContext* ctx) {
-    Ev_VariantMap* map = ev_permalloc(sizeof(Ev_VariantMap), ctx);
-    memset(map->slots, 0, EV_NUMBER_OF_MAP_SLOTS*sizeof(Ev_VariantList));
-    return map;
-}
-
-#define ev_calculateHash(hash,ptr,string) \
-    hash=5381; ptr=(unsigned char*)string; while (*ptr) { hash = ((hash<<5)+hash) ^ *ptr++; }
+#define ev_permallocContainer(type,ctx) \
+    ev_permallocSet(0, sizeof(type), ctx)
 
 #define ev_addElementToList(list,elementToAdd)                                  \
     if ((list)->last) { (list)->last = ((list)->last->next = (elementToAdd)); } \
     else              { (list)->last = ((list)->first      = (elementToAdd)); }
 
-static void ev_addVariantToMapSlot(Ev_VariantList* mapSlot, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
-    Ev_VariantElement* element;
-    assert( mapSlot!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' && ctx!=NULL );
-    
-    element             = ev_permalloc(sizeof(Ev_VariantElement),CTX(permactx));
-    element->key.string = ev_permallocString(stringKey,0,0,CTX(permactx));
-    ev_copyVariant(&element->variant, variantToAdd, ctx);
-    ev_addElementToList(mapSlot, element);
-}
+#define ev_calculateHash(hash,ptr,string) \
+    hash=5381; ptr=(unsigned char*)string; while (*ptr) { hash = ((hash<<5)+hash) ^ *ptr++; }
 
-static void ev_addVariantToMap(Ev_VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
+static EvConstant* ev_addVariantToMap(Ev_VariantMap* map, const EvVariant* variantToAdd, const utf8* stringKey, EVCTX* ctx) {
     unsigned hash; unsigned char* tmp;
+    Ev_VariantList* mapSlot; EvConstant* constant;
     assert( map!=NULL && variantToAdd!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
+    
     ev_calculateHash(hash,tmp,stringKey);
-    ev_addVariantToMapSlot(&map->slots[hash%EV_NUMBER_OF_MAP_SLOTS], variantToAdd, stringKey, ctx);
+    mapSlot = &map->slots[hash%EV_NUMBER_OF_MAP_SLOTS];
+    constant       = ev_permalloc(sizeof(EvConstant),CTX(permactx));
+    constant->name = ev_permallocString(stringKey,0,0,CTX(permactx));
+    ev_copyVariant(&constant->variant, variantToAdd, ctx);
+    ev_addElementToList(mapSlot, constant);
+    return constant;
 }
 
 static const EvVariant* ev_findVariantInMap(Ev_VariantMap* map, const utf8* stringKey) {
-    unsigned hash; Ev_VariantElement* element; unsigned char* tmp;
+    unsigned hash; EvConstant* constant; unsigned char* tmp;
     assert( map!=NULL && stringKey!=NULL && stringKey[0]!='\0' );
     ev_calculateHash(hash,tmp,stringKey);
-    element = map->slots[hash%EV_NUMBER_OF_MAP_SLOTS].first;
-    while (element) {
-        if ( 0==strcmp(element->key.string,stringKey) ) { return &element->variant; }
-        element = element->next;
+    constant = map->slots[hash%EV_NUMBER_OF_MAP_SLOTS].first;
+    while (constant) {
+        if ( 0==strcmp(constant->name,stringKey) ) { return &constant->variant; }
+        constant = constant->next;
     }
     return NULL;
 }
@@ -663,7 +659,28 @@ static Bool ev_readName(utf8 *buffer, int bufferSize, const utf8 *ptr, const utf
 
 
 /*=================================================================================================================*/
-#pragma mark - > EXPRESION EVALUATOR
+#pragma mark - > CONTEXT CREATION / DESTRUCTION
+
+EVCTX* evCreateContext(void) {
+    Ev_Context* ctx = malloc(sizeof(Ev_Context));
+    CTX(permactx)         = ev_permallocCreateContext();
+    CTX(constantMap)      = ev_permallocContainer(Ev_VariantMap,       CTX(permactx));
+    CTX(userConstantList) = ev_permallocContainer(Ev_UserConstantList, CTX(permactx));
+    CTX(curErrorLine)     = NULL;
+    CTX(firstError)       = NULL;
+    CTX(lastError)        = NULL;
+    return (EVCTX*)ctx;
+}
+
+void evDestroyContext(EVCTX* ctx) {
+    if (ctx==NULL) { return; }
+    ev_permallocDestroyContext(CTX(permactx));
+    free((Ev_Context*)ctx);
+}
+
+
+/*=================================================================================================================*/
+#pragma mark - > EXPRESION EVALUATION
 
 static EvVariant theVariant;
 struct { const Ev_Operator* array[EV_CALC_STACK_SIZE]; int i; } opStack;
@@ -744,7 +761,7 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_endptr, EVC
             }
             else if ( ev_readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( ev_readName(name,sizeof(name),ptr,&ptr) ) {
-                variantRef = ev_findVariantInMap(CTX(constantsMap), name);
+                variantRef = ev_findVariantInMap(CTX(constantMap), name);
                 if (variantRef==NULL || variantRef->evtype==EVTYPE_UNSOLVED) {
                     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.evtype = EVTYPE_UNSOLVED;
@@ -770,35 +787,45 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_endptr, EVC
     return &theVariant;
 }
 
-void evAddConstant(const utf8* name, const EvVariant* value, EVCTX* ctx) {
-    assert( name!=NULL && value!=NULL && ctx!=NULL );
-    ev_addVariantToMap(CTX(constantsMap), value, name, ctx);
+void evEvaluateAllUnsolvedConstants(void) {
+    
 }
+
+EvConstant* evAddConstant(const EvVariant* variant, const utf8* name, EVCTX* ctx) {
+    assert( variant!=NULL && name!=NULL && ctx!=NULL );
+    return ev_addVariantToMap(CTX(constantMap), variant, name, ctx);
+}
+
 
 /*=================================================================================================================*/
-#pragma mark - > CONTEXT CREATION / DESTRUCTION
+#pragma mark - > USER CONSTANTS
 
-EVCTX* evCreateContext(void) {
-    Ev_Context* ctx = malloc(sizeof(Ev_Context));
-    CTX(permactx)     = ev_permallocCreateContext();
-    CTX(deferredList) = ev_permallocDeferredList(CTX(permactx));
-    CTX(constantsMap) = ev_permallocVariantMap(CTX(permactx));
-    CTX(curErrorLine) = NULL;
-    CTX(firstError)   = NULL;
-    CTX(lastError)    = NULL;
-    return ctx;
+EvUserConstant* evAddUserConstant(EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx) {
+    EvUserConstant* userConstant;
+    assert( variant!=NULL && ctx!=NULL );
+    
+    userConstant = ev_permalloc(sizeof(EvUserConstant), CTX(permactx));
+    userConstant->userValue = userValue;
+    userConstant->userPtr   = userPtr;
+    ev_copyVariant(&userConstant->variant, variant, ctx);
+    ev_addElementToList(CTX(userConstantList), userConstant);
+    return userConstant;
 }
 
-void evDestroyContext(EVCTX* ctx) {
-    if (ctx==NULL) { return; }
-    ev_permallocDestroyContext(CTX(permactx));
-    free((Ev_Context*)ctx);
+EvUserConstant* evGetFirstUserConstant(EVCTX* ctx) {
+    assert( ctx!=NULL );
+    return CTX(userConstantList)->first;
 }
 
+EvUserConstant* evGetNextUserConstant(const EvUserConstant* constant, EVCTX* ctx) {
+    assert( constant!=NULL && ctx!=NULL );
+    return constant->next;
+}
 
 /*=================================================================================================================*/
 #pragma mark - > DEFERRED EVALUATIONS
 
+/*
 EvDeferredVariant* evDeferVariant(const EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx) {
     EvDeferredVariant* deferred;
     assert( variant!=NULL && ctx!=NULL );
@@ -816,7 +843,7 @@ EvDeferredVariant* evGetFirstDeferredVariant(EVCTX* ctx) {
     assert( ctx!=NULL );
     if (CTX(firstError)!=NULL) { return NULL; }
 
-    /* evaluate all unsolved deferred variants */
+    / evaluate all unsolved deferred variants /
     unsolvedCount = 0xFFFF;
     do {
         
@@ -840,6 +867,7 @@ EvDeferredVariant* evGetNextDeferredVariant(EvDeferredVariant* deferred, EVCTX* 
     assert( deferred!=NULL && ctx!=NULL );
     return deferred->next;
 }
+*/
 
 
 /*=================================================================================================================*/
