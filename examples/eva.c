@@ -90,7 +90,7 @@ static void printLine(const EvUserConstant* constant) {
     assert( constant!=NULL );
     
     variant = &constant->variant;
-    switch (variant->evtype) {
+    switch (variant->_.evtype) {
         case EVTYPE_EMPTY:    /* printf("<empty>"); */ break;
         case EVTYPE_UNSOLVED: printf("<..?..>"); break;
         case EVTYPE_INUMBER:  printf("%d",variant->inumber.value); break;
@@ -138,6 +138,7 @@ int main(int argc, char *argv[]) {
         evaluateFile(filePaths[i],ctx);
     }
     /* print all lines stored as deferred variants */
+    evEvaluateAllUnsolvedConstants(ctx);
     for ( constant=evGetFirstUserConstant(ctx); constant; constant=evGetNextUserConstant(constant,ctx) ) {
         printLine(constant);
     }

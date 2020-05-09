@@ -53,13 +53,14 @@ typedef enum  EVTYPE { EVTYPE_UNSOLVED, EVTYPE_EMPTY, EVTYPE_ASTRING, EVTYPE_CST
 
 /** Union that can be used to represent any data type (integer number, float number, c-string, asm-string, etc... */
 typedef union EvVariant {
-    EVTYPE evtype;
-    struct { EVTYPE evtype;                          } empty;     /* < empty data             */
-    struct { EVTYPE evtype; int   value;             } inumber;   /* < integer number         */
-    struct { EVTYPE evtype; float value;             } fnumber;   /* < floating-point number  */
-    struct { EVTYPE evtype; const utf8 *begin, *end; } astring;   /* < assembler string       */
-    struct { EVTYPE evtype; const utf8 *begin, *end; } cstring;   /* < C string               */
-    struct { EVTYPE evtype; const utf8 *begin, *end; } unsolved;  /* < unsolved expression    */
+    struct { union EvVariant* next; EVTYPE evtype;                          } _;
+    struct { union EvVariant* next; EVTYPE evtype;                          } empty;     /* < empty data             */
+    struct { union EvVariant* next; EVTYPE evtype; int   value;             } inumber;   /* < integer number         */
+    struct { union EvVariant* next; EVTYPE evtype; float value;             } fnumber;   /* < floating-point number  */
+    struct { union EvVariant* next; EVTYPE evtype; const utf8 *begin, *end; } astring;   /* < assembler string       */
+    struct { union EvVariant* next; EVTYPE evtype; const utf8 *begin, *end; } cstring;   /* < C string               */
+    struct { union EvVariant* next; EVTYPE evtype; const utf8 *begin, *end; } unsolved;  /* < unsolved expression    */
+    union EvVariant* next;
 } EvVariant;
 
 typedef struct EvConstant {
@@ -81,7 +82,7 @@ extern EVCTX * evCreateContext(void);
 extern void    evDestroyContext(EVCTX* ctx);
 
 extern EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_end, EVCTX* ctx);
-extern void        evEvaluateAllUnsolvedConstants(void);
+extern void        evEvaluateAllUnsolvedConstants(EVCTX* ctx);
 extern EvConstant* evAddConstant(const EvVariant* value, const utf8* name, EVCTX* ctx);
 
 extern EvUserConstant* evAddUserConstant(EvVariant* variant, int userValue, void* userPtr, EVCTX* ctx);
@@ -123,6 +124,7 @@ typedef struct Ev_Context {
     struct Ev_PermallocContext* permactx;
     struct Ev_ConstantMap*      constantMap;
     struct Ev_UserConstantList* userConstantList;
+    struct Ev_UnsolvedList*     unsolvedList;
     struct Ev_ErrorLine*        curErrorLine;
     struct Ev_Error*            firstError;
     struct Ev_Error*            lastError;
@@ -359,12 +361,16 @@ static const Ev_Operator Ev_SafeGuard = {EVOP_INVALID,"",(EV_MIN_PRECEDENCE-1)};
 #pragma mark - > VARIANTS
 
 /** Special variant object used as placeholder and delimiter */
-static const EvVariant Ev_EmptyVariant = { EVTYPE_EMPTY };
+static const EvVariant Ev_EmptyVariant = { NULL, EVTYPE_EMPTY };
+
+#define ev_initVariant(dest,sour,ctx) \
+    ev_copyVariant(dest,sour,ctx);    \
+    (dest)->next=NULL
 
 static void ev_copyVariant(EvVariant* dest, const EvVariant* sour, EVCTX* ctx) {
     int length; utf8* begin;
     assert( dest!=NULL && sour!=NULL && ctx!=NULL );
-    switch ( (dest->evtype=sour->evtype) ) {
+    switch ( (dest->_.evtype=sour->_.evtype) ) {
         case EVTYPE_EMPTY: break;
         case EVTYPE_INUMBER: dest->inumber.value = sour->inumber.value; break;
         case EVTYPE_FNUMBER: dest->fnumber.value = sour->fnumber.value; break;
@@ -381,7 +387,7 @@ static void ev_copyVariant(EvVariant* dest, const EvVariant* sour, EVCTX* ctx) {
 }
 
 static Bool ev_variantToInt(const EvVariant* variant, int* i) {
-    switch( variant->evtype ) {
+    switch( variant->_.evtype ) {
         case EVTYPE_INUMBER: (*i)=variant->inumber.value;    return TRUE;
         case EVTYPE_ASTRING: (*i)=variant->astring.begin[0]; return TRUE;
         case EVTYPE_EMPTY:   return TRUE;
@@ -390,7 +396,7 @@ static Bool ev_variantToInt(const EvVariant* variant, int* i) {
 }
 
 static Bool ev_variantToFloat(const EvVariant* variant, float* f) {
-    switch( variant->evtype ) {
+    switch( variant->_.evtype ) {
         case EVTYPE_FNUMBER: (*f)=variant->fnumber.value;        return TRUE;
         case EVTYPE_INUMBER: (*f)=(float)variant->inumber.value; return TRUE;
         case EVTYPE_EMPTY:   return TRUE;
@@ -401,7 +407,7 @@ static Bool ev_variantToFloat(const EvVariant* variant, float* f) {
 static Bool ev_variantToString(const EvVariant* variant, utf8* buffer, int bufferSize) {
     utf8 *dest, *destend; const utf8 *ptr, *ptrend; int ch, digit;
     assert( variant!=NULL && buffer!=NULL && bufferSize>0 );
-    switch (variant->evtype) {
+    switch (variant->_.evtype) {
             
         case EVTYPE_ASTRING:
             safecpy_begin(dest,destend,buffer,bufferSize);
@@ -458,10 +464,10 @@ static Bool ev_variantToString(const EvVariant* variant, utf8* buffer, int buffe
     }
 }
 
-#define ev_return_INumber1(v,       op, right) v->evtype=EVTYPE_INUMBER; v->inumber.value=      op right; return 0
-#define ev_return_INumber2(v, left, op, right) v->evtype=EVTYPE_INUMBER; v->inumber.value= left op right; return 1
-#define ev_return_FNumber1(v,       op, right) v->evtype=EVTYPE_FNUMBER; v->fnumber.value=      op right; return 0
-#define ev_return_FNumber2(v, left, op, right) v->evtype=EVTYPE_FNUMBER; v->fnumber.value= left op right; return 1
+#define ev_return_INumber1(v,       op, right) v->_.evtype=EVTYPE_INUMBER; v->inumber.value=      op right; return 0
+#define ev_return_INumber2(v, left, op, right) v->_.evtype=EVTYPE_INUMBER; v->inumber.value= left op right; return 1
+#define ev_return_FNumber1(v,       op, right) v->_.evtype=EVTYPE_FNUMBER; v->fnumber.value=      op right; return 0
+#define ev_return_FNumber2(v, left, op, right) v->_.evtype=EVTYPE_FNUMBER; v->fnumber.value= left op right; return 1
 
 /**
  * Calculates a simple mathematical operation between two variants applying the provided operator
@@ -505,6 +511,7 @@ static int ev_calculate(EvVariant* v, const EvVariant* left, const Ev_Operator *
 typedef struct Ev_ConstantList     { EvConstant     *first, *last;                  } Ev_ConstantList;
 typedef struct Ev_ConstantMap      { Ev_ConstantList slots[EV_NUMBER_OF_MAP_SLOTS]; } Ev_ConstantMap;
 typedef struct Ev_UserConstantList { EvUserConstant *first, *last;                  } Ev_UserConstantList;
+typedef struct Ev_UnsolvedList     { EvVariant      *first, *last;                  } Ev_UnsolvedList;
 
 #define ev_permallocContainer(type,ctx) \
     ev_permallocSet(0, sizeof(type), ctx)
@@ -525,7 +532,7 @@ static EvConstant* ev_addConstantToMap(Ev_ConstantMap* map, const EvVariant* var
     mapSlot = &map->slots[hash%EV_NUMBER_OF_MAP_SLOTS];
     constant       = ev_permalloc(sizeof(EvConstant),CTX(permactx));
     constant->name = ev_permallocString(name,0,0,CTX(permactx));
-    ev_copyVariant(&constant->variant, variant, ctx);
+    ev_initVariant(&constant->variant, variant, ctx);
     ev_addElementToList(mapSlot, constant);
     return constant;
 }
@@ -666,6 +673,7 @@ EVCTX* evCreateContext(void) {
     CTX(permactx)         = ev_permallocCreateContext();
     CTX(constantMap)      = ev_permallocContainer(Ev_ConstantMap,      CTX(permactx));
     CTX(userConstantList) = ev_permallocContainer(Ev_UserConstantList, CTX(permactx));
+    CTX(unsolvedList)     = ev_permallocContainer(Ev_UnsolvedList,     CTX(permactx));
     CTX(curErrorLine)     = NULL;
     CTX(firstError)       = NULL;
     CTX(lastError)        = NULL;
@@ -708,7 +716,8 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_endptr, EVC
     assert( ctx!=NULL );
 
     err = 0;
-    theVariant.evtype = EVTYPE_EMPTY;
+    theVariant._.next         = NULL;
+    theVariant._.evtype       = EVTYPE_EMPTY;
     theVariant.unsolved.begin = ptr;
     skipblankspaces(ptr);
     
@@ -762,7 +771,7 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_endptr, EVC
             else if ( ev_readNumber(&variant,ptr,&ptr) ) { cPUSH(vStack, variant); }
             else if ( ev_readName(name,sizeof(name),ptr,&ptr) ) {
                 variantRef = ev_findConstantInMap(CTX(constantMap), name);
-                if (variantRef==NULL || variantRef->evtype==EVTYPE_UNSOLVED) {
+                if (variantRef==NULL || variantRef->_.evtype==EVTYPE_UNSOLVED) {
                     while (*ptr!=EVCH_PARAM_SEP && !isendofline(*ptr)) { ++ptr; }
                     theVariant.unsolved.evtype = EVTYPE_UNSOLVED;
                     theVariant.unsolved.end    = ptr;
@@ -787,13 +796,35 @@ EvVariant * evEvaluateExpression(const utf8 *start, const utf8 **out_endptr, EVC
     return &theVariant;
 }
 
-void evEvaluateAllUnsolvedConstants(void) {
+void evEvaluateAllUnsolvedConstants(EVCTX* ctx) {
+    EvVariant *unsolved, *result;
+    int unsolvedCount, solvedInThisCycle;
+    
+    do {
+        unsolvedCount = solvedInThisCycle = 0;
+        for (unsolved=CTX(unsolvedList)->first; unsolved; unsolved=unsolved->next) {
+            if (unsolved->_.evtype == EVTYPE_UNSOLVED) {
+                result = evEvaluateExpression(unsolved->unsolved.begin, NULL, ctx);
+                if (result->_.evtype==EVTYPE_UNSOLVED) { ++unsolvedCount; }
+                else {
+                    ev_copyVariant(unsolved, result, ctx);
+                    ++solvedInThisCycle;
+                }
+            }
+        }
+    } while ( unsolvedCount>0 && solvedInThisCycle>0 );
     
 }
 
 EvConstant* evAddConstant(const EvVariant* variant, const utf8* name, EVCTX* ctx) {
+    EvConstant* constant;
     assert( variant!=NULL && name!=NULL && ctx!=NULL );
-    return ev_addConstantToMap(CTX(constantMap), variant, name, ctx);
+    constant = ev_addConstantToMap(CTX(constantMap), variant, name, ctx);
+    if (constant->variant._.evtype==EVTYPE_UNSOLVED) {
+        assert( constant->variant.unsolved.begin!=NULL );
+        ev_addElementToList(CTX(unsolvedList), &constant->variant);
+    }
+    return constant;
 }
 
 
@@ -807,8 +838,12 @@ EvUserConstant* evAddUserConstant(EvVariant* variant, int userValue, void* userP
     userConstant = ev_permalloc(sizeof(EvUserConstant), CTX(permactx));
     userConstant->userValue = userValue;
     userConstant->userPtr   = userPtr;
-    ev_copyVariant(&userConstant->variant, variant, ctx);
+    ev_initVariant(&userConstant->variant, variant, ctx);
     ev_addElementToList(CTX(userConstantList), userConstant);
+    if (userConstant->variant._.evtype==EVTYPE_UNSOLVED) {
+        assert( userConstant->variant.unsolved.begin!=NULL );
+        ev_addElementToList(CTX(unsolvedList), &userConstant->variant);
+    }
     return userConstant;
 }
 
